@@ -4,13 +4,15 @@ import { useAuth } from '../../context/AuthContext'
 import { registrarAuditoria } from '../../lib/auditoria'
 import { getNombreSocioCobro } from '../../lib/formatters'
 import FotoUploaderModal from './FotoUploaderModal'
-import { Receipt, Coins, QrCode, CheckCircle2, AlertCircle, X, Camera, ExternalLink, Sparkles } from 'lucide-react'
+import { Receipt, Coins, QrCode, CheckCircle2, AlertCircle, X, Camera, ExternalLink, Sparkles, Edit2 } from 'lucide-react'
 
 export default function CobrarModal({
   isOpen,
   onClose,
   cobro,
   perdonazoActivo = null,
+  isAdmin = false,
+  onEditMontos = null,
   onPaymentSuccess,
 }) {
   const { user } = useAuth()
@@ -176,18 +178,53 @@ export default function CobrarModal({
           </div>
         )}
 
-        <div className="bg-slate-50 p-4 border-b border-slate-200 grid grid-cols-3 gap-2 text-center text-xs">
-          <div>
-            <span className="text-[10px] text-slate-400 uppercase font-semibold">Total a Pagar</span>
-            <p className="text-sm font-bold text-slate-800">{totalAPagar.toFixed(2)} Bs</p>
+        <div className="bg-slate-50 p-4 border-b border-slate-200 space-y-2.5 text-xs">
+          <div className="grid grid-cols-3 gap-2 text-center">
+            <div>
+              <span className="text-[10px] text-slate-400 uppercase font-semibold">Total a Pagar</span>
+              <p className="text-sm font-bold text-slate-800">{totalAPagar.toFixed(2)} Bs</p>
+            </div>
+            <div>
+              <span className="text-[10px] text-slate-400 uppercase font-semibold">Ya Abonado</span>
+              <p className="text-sm font-bold text-emerald-700">{totalPagado.toFixed(2)} Bs</p>
+            </div>
+            <div>
+              <span className="text-[10px] text-slate-400 uppercase font-semibold">Saldo Pendiente</span>
+              <p className="text-sm font-bold text-red-600">{saldoPendiente.toFixed(2)} Bs</p>
+            </div>
           </div>
-          <div>
-            <span className="text-[10px] text-slate-400 uppercase font-semibold">Ya Abonado</span>
-            <p className="text-sm font-bold text-emerald-700">{totalPagado.toFixed(2)} Bs</p>
-          </div>
-          <div>
-            <span className="text-[10px] text-slate-400 uppercase font-semibold">Saldo Pendiente</span>
-            <p className="text-sm font-bold text-red-600">{saldoPendiente.toFixed(2)} Bs</p>
+
+          <div className="pt-2 border-t border-slate-200/80 flex flex-wrap items-center justify-between gap-2 text-[11px]">
+            <div className="flex flex-wrap items-center gap-1.5 text-slate-600">
+              <span className="px-2 py-0.5 rounded bg-white border border-slate-200 font-semibold">
+                Guardia: {(cobro.montoGuardia ?? cobro.monto_guardia ?? 40).toFixed(2)}
+              </span>
+              <span className="px-2 py-0.5 rounded bg-white border border-slate-200 font-semibold">
+                Agua: {(cobro.montoAgua ?? cobro.monto_agua ?? 5).toFixed(2)}
+              </span>
+              <span className="px-2 py-0.5 rounded bg-white border border-slate-200 font-semibold">
+                Luz: {(cobro.montoLuzGrupo ?? cobro.monto_luz_grupo ?? 0).toFixed(2)}
+              </span>
+              {(cobro.esMontoEditado || cobro.es_monto_editado) && (
+                <span className="px-2 py-0.5 rounded bg-amber-100 text-amber-800 border border-amber-300 font-bold">
+                  Monto ajustado
+                </span>
+              )}
+            </div>
+
+            {isAdmin && onEditMontos && (
+              <button
+                type="button"
+                onClick={() => {
+                  onClose()
+                  onEditMontos(cobro)
+                }}
+                className="px-2 py-1 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-300 rounded-lg font-bold inline-flex items-center gap-1"
+              >
+                <Edit2 className="w-3 h-3" />
+                <span>Editar Montos</span>
+              </button>
+            )}
           </div>
         </div>
 

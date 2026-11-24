@@ -16,6 +16,7 @@ export function descargarRendicionExcel(consolidado, metadata = {}) {
 
   const wb = XLSX.utils.book_new()
   const cp = consolidado.cumplimientoPuestos || {}
+  const di = consolidado.desgloseInternoServicios || {}
 
   // 1. Hoja Resumen_Cajas
   const resumenData = [
@@ -44,6 +45,13 @@ export function descargarRendicionExcel(consolidado, metadata = {}) {
     ['5. SALDO FINAL AL CIERRE', consolidado.totalFinServicios, consolidado.totalFinAfiliaciones, consolidado.granTotalFinal],
     ['   - Efectivo Físico en Mano', consolidado.finServiciosEf, consolidado.finAfiliacionesEf, consolidado.totalEfectivoFinal],
     ['   - Saldo en QR / Banco', consolidado.finServiciosQr, consolidado.finAfiliacionesQr, consolidado.totalQrFinal],
+    [],
+    ['DESGLOSE INTERNO CAJA SERVICIOS (INGRESOS DEL PERIODO)'],
+    ['Total Fondo Guardia (Socios + Externos)', Number((di.totalGuardia || 0).toFixed(2)), `Socios: ${(di.guardiaSocios || 0).toFixed(2)} Bs`, `Externos: ${(di.guardiaExternos || 0).toFixed(2)} Bs`],
+    ['Total Fondo Agua (Socios + Externos)', Number((di.totalAgua || 0).toFixed(2)), `Socios: ${(di.aguaSocios || 0).toFixed(2)} Bs`, `Externos: ${(di.aguaExternos || 0).toFixed(2)} Bs`],
+    ['Total Fondo Grupo Luz (Consumo + Alumbrado + Basura)', Number((di.totalLuzGrupo || 0).toFixed(2))],
+    ['Multas por Mora Cobradas', Number((di.totalMultasSocios || 0).toFixed(2))],
+    ['Recuperación Deudores Servicios', Number((di.totalDeudoresServicios || 0).toFixed(2))],
     [],
     ['RESUMEN DE CUMPLIMIENTO DE COBROS (PUESTOS)'],
     ['Total Puestos Activos', cp.totalPuestosActivos || 0, `Representan ${cp.totalSociosActivos || 0} socios`],

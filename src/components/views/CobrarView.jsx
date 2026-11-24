@@ -11,6 +11,7 @@ import HistorialPagosModal from '../modals/HistorialPagosModal'
 import PerdonarMultaModal from '../modals/PerdonarMultaModal'
 import PerdonazoModal from '../modals/PerdonazoModal'
 import FotoUploaderModal from '../modals/FotoUploaderModal'
+import EditarMontosModal from '../modals/EditarMontosModal'
 import {
   Receipt,
   Zap,
@@ -53,7 +54,9 @@ export default function CobrarView() {
   const [cobrosExternos, setCobrosExternos] = useState([])
   const [loadingExternos, setLoadingExternos] = useState(false)
   const [selectedExternoPago, setSelectedExternoPago] = useState(null)
-  const [extMonto, setExtMonto] = useState('')
+  const [extGuardia, setExtGuardia] = useState('40')
+  const [extAgua, setExtAgua] = useState('10')
+  const [extMotivoEdicion, setExtMotivoEdicion] = useState('')
   const [extMetodo, setExtMetodo] = useState('efectivo')
   const [extTalonario, setExtTalonario] = useState('')
   const [extFecha, setExtFecha] = useState(getLocalDateStr())
@@ -70,6 +73,7 @@ export default function CobrarView() {
   const [selectedCobroForPago, setSelectedCobroForPago] = useState(null)
   const [selectedCobroForHistorial, setSelectedCobroForHistorial] = useState(null)
   const [selectedCobroForPerdon, setSelectedCobroForPerdon] = useState(null)
+  const [editarMontosTarget, setEditarMontosTarget] = useState(null)
   const [photoModalTarget, setPhotoModalTarget] = useState(null)
 
   // Modal Pago Factura Luz
@@ -174,6 +178,10 @@ export default function CobrarView() {
           mes: selectedMes,
           anio: selectedAnio,
           perdonazoActivo: vigente,
+          esMontoEditado: Boolean(cobro.es_monto_editado),
+          montoGuardiaEditado: cobro.monto_guardia,
+          montoAguaEditado: cobro.monto_agua,
+          montoLuzGrupoEditado: cobro.monto_luz_grupo,
         })
 
         return {
@@ -241,18 +249,29 @@ export default function CobrarView() {
         mes: selectedMes,
         anio: selectedAnio,
         perdonazoActivo,
+        esMontoEditado: Boolean(cobro.es_monto_editado),
+        montoGuardiaEditado: cobro.monto_guardia,
+        montoAguaEditado: cobro.monto_agua,
+        montoLuzGrupoEditado: cobro.monto_luz_grupo,
       })
+
+      const updateFields = {
+        lectura_act: act,
+        monto_base: desglose.montoBase,
+        monto_luz_redondeado: desglose.montoLuzRedondeado,
+        monto_multa: desglose.montoMulta,
+        total_a_pagar: desglose.totalAPagar,
+        estado: desglose.estado,
+      }
+      if (!cobro.es_monto_editado) {
+        updateFields.monto_guardia = desglose.montoGuardia
+        updateFields.monto_agua = desglose.montoAgua
+        updateFields.monto_luz_grupo = desglose.montoLuzGrupo
+      }
 
       const { error } = await supabase
         .from('cobros_servicios')
-        .update({
-          lectura_act: act,
-          monto_base: desglose.montoBase,
-          monto_luz_redondeado: desglose.montoLuzRedondeado,
-          monto_multa: desglose.montoMulta,
-          total_a_pagar: desglose.totalAPagar,
-          estado: desglose.estado,
-        })
+        .update(updateFields)
         .eq('id', cobro.id)
 
       if (error) throw error
@@ -260,7 +279,7 @@ export default function CobrarView() {
       await supabase.from('unidades_cobro').update({ ultima_lectura: act }).eq('id', cobro.unidad_id)
 
       setCobros((prev) =>
-        prev.map((c) => (c.id === cobro.id ? { ...c, ...desglose, lectura_act: act } : c))
+        prev.map((c) => (c.id === cobro.id ? { ...c, ...updateFields, ...desglose, lectura_act: act } : c))
       )
     } catch (err) {
       console.error(err)
@@ -286,22 +305,33 @@ export default function CobrarView() {
         mes: selectedMes,
         anio: selectedAnio,
         perdonazoActivo,
+        esMontoEditado: Boolean(cobro.es_monto_editado),
+        montoGuardiaEditado: cobro.monto_guardia,
+        montoAguaEditado: cobro.monto_agua,
+        montoLuzGrupoEditado: cobro.monto_luz_grupo,
       })
+
+      const updateFields = {
+        cambio_tarifador: nuevoCambio,
+        monto_base: desglose.montoBase,
+        monto_luz_redondeado: desglose.montoLuzRedondeado,
+        monto_multa: desglose.montoMulta,
+        total_a_pagar: desglose.totalAPagar,
+        estado: desglose.estado,
+      }
+      if (!cobro.es_monto_editado) {
+        updateFields.monto_guardia = desglose.montoGuardia
+        updateFields.monto_agua = desglose.montoAgua
+        updateFields.monto_luz_grupo = desglose.montoLuzGrupo
+      }
 
       await supabase
         .from('cobros_servicios')
-        .update({
-          cambio_tarifador: nuevoCambio,
-          monto_base: desglose.montoBase,
-          monto_luz_redondeado: desglose.montoLuzRedondeado,
-          monto_multa: desglose.montoMulta,
-          total_a_pagar: desglose.totalAPagar,
-          estado: desglose.estado,
-        })
+        .update(updateFields)
         .eq('id', cobro.id)
 
       setCobros((prev) =>
-        prev.map((c) => (c.id === cobro.id ? { ...c, ...desglose, cambio_tarifador: nuevoCambio } : c))
+        prev.map((c) => (c.id === cobro.id ? { ...c, ...updateFields, ...desglose, cambio_tarifador: nuevoCambio } : c))
       )
     } catch (err) {
       console.error(err)
@@ -326,6 +356,10 @@ export default function CobrarView() {
         mes: selectedMes,
         anio: selectedAnio,
         perdonazoActivo,
+        esMontoEditado: Boolean(cobro.es_monto_editado),
+        montoGuardiaEditado: cobro.monto_guardia,
+        montoAguaEditado: cobro.monto_agua,
+        montoLuzGrupoEditado: cobro.monto_luz_grupo,
       })
 
       await supabase
@@ -427,7 +461,9 @@ export default function CobrarView() {
   const openCobrarExternoModal = (ext) => {
     setEditingExtCobro(null)
     setSelectedExternoPago(ext)
-    setExtMonto(String(parseFloat(ext.monto_mensual_sugerido) || 0))
+    setExtGuardia(String(ext.monto_guardia_base ?? 40))
+    setExtAgua(String(ext.monto_agua_base ?? 10))
+    setExtMotivoEdicion('')
     setExtMetodo('efectivo')
     setExtTalonario('')
     setExtFecha(getLocalDateStr())
@@ -437,7 +473,9 @@ export default function CobrarView() {
   const openEditCobroExternoModal = (ext, cobroExt) => {
     setEditingExtCobro(cobroExt)
     setSelectedExternoPago(ext)
-    setExtMonto(String(parseFloat(cobroExt.monto_pagado) || 0))
+    setExtGuardia(String(cobroExt.monto_guardia ?? ext.monto_guardia_base ?? 40))
+    setExtAgua(String(cobroExt.monto_agua ?? ext.monto_agua_base ?? 10))
+    setExtMotivoEdicion(cobroExt.motivo_edicion_monto || '')
     setExtMetodo(cobroExt.metodo_pago || 'efectivo')
     setExtTalonario(cobroExt.nro_talonario_fisico || '')
     setExtFecha(cobroExt.fecha_pago || getLocalDateStr())
@@ -447,9 +485,23 @@ export default function CobrarView() {
   const handleSaveCobroExterno = async (e) => {
     e.preventDefault()
     if (!selectedExternoPago) return
-    const montoNum = parseFloat(extMonto)
-    if (!montoNum || montoNum <= 0) {
-      setStatusMessage({ type: 'error', text: 'Ingresa un monto válido mayor a 0.' })
+    const gNum = parseFloat(extGuardia) || 0
+    const aNum = parseFloat(extAgua) || 0
+    const montoNum = gNum + aNum
+    if (gNum < 0 || aNum < 0 || montoNum <= 0) {
+      setStatusMessage({ type: 'error', text: 'Ingresa montos válidos de Guardia y Agua con total mayor a 0.' })
+      return
+    }
+
+    const baseG = parseFloat(selectedExternoPago.monto_guardia_base ?? 40) || 0
+    const baseA = parseFloat(selectedExternoPago.monto_agua_base ?? 10) || 0
+    const fueAjustadoVsBase = Math.abs(gNum - baseG) > 0.009 || Math.abs(aNum - baseA) > 0.009
+
+    if (!editingExtCobro && fueAjustadoVsBase && extMotivoEdicion.trim().length < 5) {
+      setStatusMessage({
+        type: 'error',
+        text: 'Si modificas el monto base de Guardia o Agua, ingresa un motivo de al menos 5 caracteres.',
+      })
       return
     }
 
@@ -460,30 +512,43 @@ export default function CobrarView() {
 
     setSavingExterno(true)
     try {
-      const { error } = await supabase.from('cobros_externos').insert([
-        {
-          externo_id: selectedExternoPago.id,
-          anio: selectedAnio,
-          mes: selectedMes,
-          monto_correspondiente: parseFloat(selectedExternoPago.monto_mensual_sugerido) || montoNum,
-          monto_pagado: montoNum,
-          metodo_pago: extMetodo,
-          nro_talonario_fisico: extTalonario.trim() || null,
-          fecha_pago: extFecha || getLocalDateStr(),
-          observaciones: extObs.trim() || null,
-          anulado: false,
-        },
-      ])
+      const { data: inserted, error } = await supabase
+        .from('cobros_externos')
+        .insert([
+          {
+            externo_id: selectedExternoPago.id,
+            anio: selectedAnio,
+            mes: selectedMes,
+            monto_correspondiente: parseFloat(selectedExternoPago.monto_mensual_sugerido) || baseG + baseA,
+            monto_guardia: gNum,
+            monto_agua: aNum,
+            es_monto_editado: fueAjustadoVsBase,
+            motivo_edicion_monto: fueAjustadoVsBase ? extMotivoEdicion.trim() : null,
+            monto_pagado: montoNum,
+            metodo_pago: extMetodo,
+            nro_talonario_fisico: extTalonario.trim() || null,
+            fecha_pago: extFecha || getLocalDateStr(),
+            observaciones: extObs.trim() || null,
+            anulado: false,
+          },
+        ])
+        .select()
+        .single()
       if (error) throw error
 
       await registrarAuditoria({
         usuarioId: user?.id,
-        accion: 'COBRO_APORTANTE_EXTERNO',
+        accion: fueAjustadoVsBase ? 'AJUSTE_Y_COBRO_EXTERNO' : 'COBRO_APORTANTE_EXTERNO',
         detalleJson: {
-          descripcion: `Cobro Guardia/Agua de ${montoNum.toFixed(2)} Bs a externo ${selectedExternoPago.nombre_completo} (${MESES[selectedMes]} ${selectedAnio})`,
+          descripcion: `Cobro Guardia/Agua de ${montoNum.toFixed(2)} Bs (Guardia ${gNum.toFixed(2)} + Agua ${aNum.toFixed(2)}) a externo ${selectedExternoPago.nombre_completo} (${MESES[selectedMes]} ${selectedAnio})`,
           externo_id: selectedExternoPago.id,
+          registro_id: inserted?.id,
+          monto_guardia: gNum,
+          monto_agua: aNum,
           monto: montoNum,
           metodo_pago: extMetodo,
+          es_monto_editado: fueAjustadoVsBase,
+          motivo: fueAjustadoVsBase ? extMotivoEdicion.trim() : null,
         },
       })
 
@@ -541,9 +606,18 @@ export default function CobrarView() {
     setSavingExterno(true)
     try {
       if (tipo === 'edicion') {
-        const montoNum = parseFloat(extMonto)
+        const gNum = parseFloat(extGuardia) || 0
+        const aNum = parseFloat(extAgua) || 0
+        const montoNum = gNum + aNum
+        const baseG = parseFloat(selectedExternoPago?.monto_guardia_base ?? 40) || 0
+        const baseA = parseFloat(selectedExternoPago?.monto_agua_base ?? 10) || 0
+        const adjusted = target.es_monto_editado || Math.abs(gNum - baseG) > 0.009 || Math.abs(aNum - baseA) > 0.009
         const datosNuevos = {
+          monto_guardia: gNum,
+          monto_agua: aNum,
           monto_pagado: montoNum,
+          es_monto_editado: adjusted,
+          motivo_edicion_monto: adjusted ? (motivo || target.motivo_edicion_monto) : null,
           metodo_pago: extMetodo,
           nro_talonario_fisico: extTalonario.trim() || null,
           fecha_pago: extFecha || getLocalDateStr(),
@@ -557,6 +631,8 @@ export default function CobrarView() {
           motivo,
           resumen: `Edición de cobro externo (${selectedExternoPago?.nombre_completo || target.externo_id})`,
           datosAnteriores: {
+            monto_guardia: target.monto_guardia,
+            monto_agua: target.monto_agua,
             monto_pagado: target.monto_pagado,
             metodo_pago: target.metodo_pago,
             nro_talonario_fisico: target.nro_talonario_fisico,
@@ -626,6 +702,72 @@ export default function CobrarView() {
   const totalRecaudado = cobros.reduce((sum, c) => sum + (c.totalPagado || 0), 0)
   const totalPendiente = cobros.reduce((sum, c) => sum + (c.saldoPendiente || 0), 0)
   const facturaPagada = periodo?.estado_pago_factura === 'pagada'
+
+  const cobrosExternosActivos = cobrosExternos.filter((ce) => !ce.anulado)
+  const resumenRubros = (() => {
+    let guardiaSociosEmitido = 0
+    let aguaSociosEmitido = 0
+    let luzSociosEmitido = 0
+    let guardiaSociosRec = 0
+    let aguaSociosRec = 0
+    let luzSociosRec = 0
+
+    cobros.forEach((c) => {
+      const g = parseFloat(c.montoGuardia ?? c.monto_guardia ?? 0) || 0
+      const a = parseFloat(c.montoAgua ?? c.monto_agua ?? 0) || 0
+      const l = parseFloat(c.montoLuzGrupo ?? c.monto_luz_grupo ?? 0) || 0
+      guardiaSociosEmitido += g
+      aguaSociosEmitido += a
+      luzSociosEmitido += l
+
+      const totalRubros = g + a + l
+      const totalC = Math.max(parseFloat(c.totalAPagar ?? c.total_a_pagar) || 0, totalRubros)
+      const pagado = parseFloat(c.totalPagado) || 0
+      if (pagado > 0 && totalC > 0) {
+        const ratio = Math.min(1, pagado / totalC)
+        guardiaSociosRec += g * ratio
+        aguaSociosRec += a * ratio
+        luzSociosRec += l * ratio
+      }
+    })
+
+    let guardiaExtRec = 0
+    let aguaExtRec = 0
+    cobrosExternosActivos.forEach((ce) => {
+      const pagado = parseFloat(ce.monto_pagado) || 0
+      const g = parseFloat(ce.monto_guardia)
+      const a = parseFloat(ce.monto_agua)
+      if (Number.isFinite(g) || Number.isFinite(a)) {
+        const gg = Number.isFinite(g) ? g : 0
+        const aa = Number.isFinite(a) ? a : 0
+        const s = gg + aa
+        if (s > 0 && Math.abs(s - pagado) > 0.01) {
+          guardiaExtRec += (gg / s) * pagado
+          aguaExtRec += (aa / s) * pagado
+        } else {
+          guardiaExtRec += gg
+          aguaExtRec += aa
+        }
+      } else {
+        guardiaExtRec += pagado * 0.8
+        aguaExtRec += pagado * 0.2
+      }
+    })
+
+    return {
+      guardiaSociosEmitido,
+      aguaSociosEmitido,
+      luzSociosEmitido,
+      guardiaSociosRec,
+      aguaSociosRec,
+      luzSociosRec,
+      guardiaExtRec,
+      aguaExtRec,
+      totalGuardiaRec: guardiaSociosRec + guardiaExtRec,
+      totalAguaRec: aguaSociosRec + aguaExtRec,
+      totalLuzRec: luzSociosRec,
+    }
+  })()
 
   return (
     <div className="space-y-6">
@@ -838,8 +980,12 @@ export default function CobrarView() {
                           )}
                         </div>
                         <p className="text-xs text-slate-500 mt-0.5">
-                          {ext.referencia_ubicacion || 'Sin referencia'} • Sugerido:{' '}
-                          <strong>{parseFloat(ext.monto_mensual_sugerido || 0).toFixed(2)} Bs/mes</strong>
+                          {ext.referencia_ubicacion || 'Sin referencia'} • Base:{' '}
+                          <strong>{parseFloat(ext.monto_mensual_sugerido || 0).toFixed(2)} Bs/mes</strong>{' '}
+                          <span className="text-[11px] text-indigo-700">
+                            (Guardia {(parseFloat(ext.monto_guardia_base ?? 40) || 0).toFixed(0)} + Agua{' '}
+                            {(parseFloat(ext.monto_agua_base ?? 10) || 0).toFixed(0)})
+                          </span>
                         </p>
                       </div>
 
@@ -857,11 +1003,23 @@ export default function CobrarView() {
                       <div className="bg-slate-50 rounded-xl p-3 border border-slate-100 divide-y divide-slate-200/70">
                         {pagosDelMes.map((p) => (
                           <div key={p.id} className="py-2 first:pt-0 last:pb-0 text-xs space-y-1.5">
-                            <div className="flex items-center justify-between">
-                              <div className="flex items-center gap-2">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <div className="flex flex-wrap items-center gap-2">
                                 <span className={`font-bold ${p.anulado ? 'line-through text-slate-400' : 'text-slate-800'}`}>
                                   {parseFloat(p.monto_pagado).toFixed(2)} Bs
                                 </span>
+                                <span className="text-[11px] text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-200">
+                                  G: {(parseFloat(p.monto_guardia ?? ext.monto_guardia_base ?? 40) || 0).toFixed(2)} • A:{' '}
+                                  {(parseFloat(p.monto_agua ?? ext.monto_agua_base ?? 10) || 0).toFixed(2)}
+                                </span>
+                                {p.es_monto_editado && (
+                                  <span
+                                    title={p.motivo_edicion_monto || 'Monto ajustado'}
+                                    className="text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-300 px-1.5 py-0.5 rounded"
+                                  >
+                                    Monto ajustado
+                                  </span>
+                                )}
                                 <span className="text-slate-500">
                                   ({p.metodo_pago === 'qr' ? 'QR' : 'Efectivo'}) • {p.fecha_pago}
                                 </span>
@@ -880,6 +1038,19 @@ export default function CobrarView() {
                                 ) : (
                                   isAdmin && (
                                     <>
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          setEditarMontosTarget({
+                                            tipo: 'externo',
+                                            cobro: p,
+                                            externoNombre: ext.nombre_completo,
+                                          })
+                                        }
+                                        className="px-2 py-0.5 text-[11px] font-bold bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-300 rounded"
+                                      >
+                                        Editar Montos
+                                      </button>
                                       <button
                                         type="button"
                                         onClick={() => openEditCobroExternoModal(ext, p)}
@@ -1115,6 +1286,58 @@ export default function CobrarView() {
                 </div>
               </div>
 
+              {/* Resumen Interno Mensual por Rubros (Guardia / Agua / Grupo Luz) */}
+              <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-sm space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="text-xs font-extrabold uppercase tracking-wider text-slate-800">
+                    Desglose Interno del Mes (Socios + Externos) — {MESES[selectedMes]} {selectedAnio}
+                  </span>
+                  <span className="text-[11px] text-slate-500">
+                    Recaudado neto distribuido por rubro interno
+                  </span>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+                  <div className="bg-slate-50 border border-slate-200 rounded-xl p-3">
+                    <span className="text-[10px] font-bold uppercase text-slate-600 block">Fondo Guardia</span>
+                    <p className="text-base font-extrabold text-slate-900 mt-0.5">
+                      {resumenRubros.totalGuardiaRec.toFixed(2)} Bs
+                    </p>
+                    <p className="text-[11px] text-slate-500 mt-0.5">
+                      Socios: {resumenRubros.guardiaSociosRec.toFixed(2)} • Externos: {resumenRubros.guardiaExtRec.toFixed(2)}
+                    </p>
+                    <p className="text-[10px] text-slate-400">
+                      Emitido socios: {resumenRubros.guardiaSociosEmitido.toFixed(2)} Bs
+                    </p>
+                  </div>
+                  <div className="bg-blue-50/70 border border-blue-200 rounded-xl p-3">
+                    <span className="text-[10px] font-bold uppercase text-blue-700 block">Fondo Agua</span>
+                    <p className="text-base font-extrabold text-blue-900 mt-0.5">
+                      {resumenRubros.totalAguaRec.toFixed(2)} Bs
+                    </p>
+                    <p className="text-[11px] text-blue-700 mt-0.5">
+                      Socios: {resumenRubros.aguaSociosRec.toFixed(2)} • Externos: {resumenRubros.aguaExtRec.toFixed(2)}
+                    </p>
+                    <p className="text-[10px] text-blue-500">
+                      Emitido socios: {resumenRubros.aguaSociosEmitido.toFixed(2)} Bs
+                    </p>
+                  </div>
+                  <div className="bg-amber-50/70 border border-amber-200 rounded-xl p-3">
+                    <span className="text-[10px] font-bold uppercase text-amber-700 block">
+                      Fondo Grupo Luz (Consumo + Alumb. + Basura)
+                    </span>
+                    <p className="text-base font-extrabold text-amber-900 mt-0.5">
+                      {resumenRubros.totalLuzRec.toFixed(2)} Bs
+                    </p>
+                    <p className="text-[11px] text-amber-700 mt-0.5">
+                      Emitido socios: {resumenRubros.luzSociosEmitido.toFixed(2)} Bs
+                    </p>
+                    <p className="text-[10px] text-amber-600">
+                      Factura luz mes: {parseFloat(periodo?.factura_luz_bs || 0).toFixed(2)} Bs
+                    </p>
+                  </div>
+                </div>
+              </div>
+
               {/* Search & Filter Bar */}
               <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-sm flex flex-col sm:flex-row items-center gap-3">
                 <div className="relative flex-1 w-full">
@@ -1320,13 +1543,30 @@ export default function CobrarView() {
 
                           <div className="flex flex-wrap items-center gap-4 text-xs">
                             <div>
-                              <span className="text-[10px] text-slate-400 uppercase font-semibold block">Base + Luz</span>
+                              <span className="text-[10px] text-slate-400 uppercase font-semibold block flex items-center gap-1">
+                                Desglose Mes
+                                {cobro.es_monto_editado && (
+                                  <span
+                                    title={cobro.motivo_edicion_monto || 'Ajustado manualmente'}
+                                    className="px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 border border-amber-300 text-[9px] font-bold normal-case"
+                                  >
+                                    Monto ajustado
+                                  </span>
+                                )}
+                              </span>
                               <span className="font-bold text-slate-800">
                                 {(cobro.montoBase + cobro.montoLuzRedondeado).toFixed(2)} Bs
                               </span>
-                              <span className="text-[10px] text-slate-400 block">
-                                (Base {cobro.montoBase} + Luz {cobro.montoLuzRedondeado})
+                              <span className="text-[10px] text-slate-500 block">
+                                Guardia {(cobro.montoGuardia ?? cobro.monto_guardia ?? 40).toFixed(0)} • Agua{' '}
+                                {(cobro.montoAgua ?? cobro.monto_agua ?? 5).toFixed(0)} • Luz{' '}
+                                {(cobro.montoLuzGrupo ?? cobro.monto_luz_grupo ?? 0).toFixed(0)}
                               </span>
+                              {cobro.es_monto_editado && cobro.motivo_edicion_monto && (
+                                <span className="text-[10px] text-amber-700 block truncate max-w-[200px]" title={cobro.motivo_edicion_monto}>
+                                  Motivo: {cobro.motivo_edicion_monto}
+                                </span>
+                              )}
                             </div>
 
                             <div>
@@ -1397,6 +1637,18 @@ export default function CobrarView() {
                             >
                               <Receipt className="w-4 h-4" />
                             </button>
+
+                            {isAdmin && (
+                              <button
+                                type="button"
+                                onClick={() => setEditarMontosTarget({ tipo: 'socio', cobro })}
+                                className="px-2 py-1.5 rounded-xl border border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100 text-[11px] font-bold flex items-center gap-1 transition-colors"
+                                title="Editar montos de Guardia, Agua o Luz (emergencias / reposiciones)"
+                              >
+                                <Edit2 className="w-3.5 h-3.5" />
+                                <span>Editar Montos</span>
+                              </button>
+                            )}
 
                             <button
                               type="button"
@@ -1554,29 +1806,67 @@ export default function CobrarView() {
             </div>
 
             <form onSubmit={handleSaveCobroExterno} className="p-6 space-y-4">
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">Monto Cobrado (Bs)</label>
-                  <input
-                    type="number"
-                    step="0.50"
-                    min="0.50"
-                    required
-                    value={extMonto}
-                    onChange={(e) => setExtMonto(e.target.value)}
-                    className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-xl font-bold"
-                  />
+              <div className="p-3 bg-indigo-50 border border-indigo-200 rounded-xl space-y-2.5">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="font-bold text-indigo-950">Desglose Guardia y Agua</span>
+                  <span className="font-extrabold text-indigo-700">
+                    Total: {((parseFloat(extGuardia) || 0) + (parseFloat(extAgua) || 0)).toFixed(2)} Bs
+                  </span>
                 </div>
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">Fecha de Pago</label>
-                  <input
-                    type="date"
-                    required
-                    value={extFecha}
-                    onChange={(e) => setExtFecha(e.target.value)}
-                    className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-300 rounded-xl"
-                  />
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[11px] font-semibold text-indigo-900 mb-1">Guardia (Bs)</label>
+                    <input
+                      type="number"
+                      step="0.50"
+                      min="0"
+                      required
+                      value={extGuardia}
+                      onChange={(e) => setExtGuardia(e.target.value)}
+                      className="w-full px-3 py-1.5 text-sm bg-white border border-indigo-300 rounded-xl font-bold"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-semibold text-indigo-900 mb-1">Agua (Bs)</label>
+                    <input
+                      type="number"
+                      step="0.50"
+                      min="0"
+                      required
+                      value={extAgua}
+                      onChange={(e) => setExtAgua(e.target.value)}
+                      className="w-full px-3 py-1.5 text-sm bg-white border border-indigo-300 rounded-xl font-bold"
+                    />
+                  </div>
                 </div>
+                {!editingExtCobro &&
+                  (Math.abs((parseFloat(extGuardia) || 0) - (parseFloat(selectedExternoPago.monto_guardia_base ?? 40) || 0)) > 0.009 ||
+                    Math.abs((parseFloat(extAgua) || 0) - (parseFloat(selectedExternoPago.monto_agua_base ?? 10) || 0)) > 0.009) && (
+                    <div>
+                      <label className="block text-[11px] font-bold text-amber-900 mb-1">
+                        Motivo del Ajuste (Obligatorio, min. 5 car.)
+                      </label>
+                      <input
+                        type="text"
+                        required
+                        value={extMotivoEdicion}
+                        onChange={(e) => setExtMotivoEdicion(e.target.value)}
+                        placeholder="Ej. Puesto cerrado medio mes / reposición..."
+                        className="w-full px-2.5 py-1.5 text-xs bg-white border border-amber-300 rounded-lg"
+                      />
+                    </div>
+                  )}
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Fecha de Pago</label>
+                <input
+                  type="date"
+                  required
+                  value={extFecha}
+                  onChange={(e) => setExtFecha(e.target.value)}
+                  className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-300 rounded-xl"
+                />
               </div>
 
               <div>
@@ -1669,7 +1959,21 @@ export default function CobrarView() {
         onClose={() => setSelectedCobroForPago(null)}
         cobro={selectedCobroForPago}
         perdonazoActivo={perdonazoActivo}
+        isAdmin={isAdmin}
+        onEditMontos={(c) => setEditarMontosTarget({ tipo: 'socio', cobro: c })}
         onPaymentSuccess={() => fetchPeriodoYCobros()}
+      />
+
+      <EditarMontosModal
+        isOpen={Boolean(editarMontosTarget)}
+        onClose={() => setEditarMontosTarget(null)}
+        tipo={editarMontosTarget?.tipo || 'socio'}
+        cobro={editarMontosTarget?.cobro || null}
+        externoNombre={editarMontosTarget?.externoNombre || ''}
+        onSaved={() => {
+          fetchPeriodoYCobros()
+          fetchExternosYMes()
+        }}
       />
 
       <HistorialPagosModal

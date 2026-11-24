@@ -67,7 +67,8 @@ export default function SociosView() {
   const [extNombre, setExtNombre] = useState('')
   const [extTelefono, setExtTelefono] = useState('')
   const [extUbicacion, setExtUbicacion] = useState('')
-  const [extMontoSugerido, setExtMontoSugerido] = useState('')
+  const [extGuardiaBase, setExtGuardiaBase] = useState('40')
+  const [extAguaBase, setExtAguaBase] = useState('10')
   const [extActivo, setExtActivo] = useState(true)
   const [extObs, setExtObs] = useState('')
   const [savingExt, setSavingExt] = useState(false)
@@ -336,7 +337,8 @@ export default function SociosView() {
     setExtNombre('')
     setExtTelefono('')
     setExtUbicacion('')
-    setExtMontoSugerido('')
+    setExtGuardiaBase('40')
+    setExtAguaBase('10')
     setExtActivo(true)
     setExtObs('')
     setIsExtModalOpen(true)
@@ -348,7 +350,8 @@ export default function SociosView() {
     setExtNombre(ext.nombre_completo || '')
     setExtTelefono(ext.telefono || '')
     setExtUbicacion(ext.referencia_ubicacion || '')
-    setExtMontoSugerido(String(ext.monto_mensual_sugerido ?? ''))
+    setExtGuardiaBase(String(ext.monto_guardia_base ?? 40))
+    setExtAguaBase(String(ext.monto_agua_base ?? 10))
     setExtActivo(ext.activo !== false)
     setExtObs(ext.observaciones || '')
     setIsExtModalOpen(true)
@@ -374,11 +377,15 @@ export default function SociosView() {
 
     setSavingExt(true)
     try {
+      const gVal = parseFloat(extGuardiaBase) || 0
+      const aVal = parseFloat(extAguaBase) || 0
       const payload = {
         nombre_completo: extNombre.trim(),
         telefono: extTelefono.trim() || null,
         referencia_ubicacion: extUbicacion.trim() || null,
-        monto_mensual_sugerido: parseFloat(extMontoSugerido) || 0,
+        monto_guardia_base: gVal,
+        monto_agua_base: aVal,
+        monto_mensual_sugerido: gVal + aVal,
         activo: extActivo,
         observaciones: extObs.trim() || null,
       }
@@ -512,11 +519,15 @@ export default function SociosView() {
 
         setStatusMessage({ type: 'success', text: `Socio "${target.nombre}" eliminado y registrado en bitácora.` })
       } else if (entity === 'externo' && tipoOp === 'edicion') {
+        const gVal = parseFloat(extGuardiaBase) || 0
+        const aVal = parseFloat(extAguaBase) || 0
         const payload = {
           nombre_completo: extNombre.trim(),
           telefono: extTelefono.trim() || null,
           referencia_ubicacion: extUbicacion.trim() || null,
-          monto_mensual_sugerido: parseFloat(extMontoSugerido) || 0,
+          monto_guardia_base: gVal,
+          monto_agua_base: aVal,
+          monto_mensual_sugerido: gVal + aVal,
           activo: extActivo,
           observaciones: extObs.trim() || null,
         }
@@ -532,6 +543,8 @@ export default function SociosView() {
             nombre_completo: target.nombre_completo,
             telefono: target.telefono,
             referencia_ubicacion: target.referencia_ubicacion,
+            monto_guardia_base: target.monto_guardia_base ?? 40,
+            monto_agua_base: target.monto_agua_base ?? 10,
             monto_mensual_sugerido: target.monto_mensual_sugerido,
             activo: target.activo,
             observaciones: target.observaciones,
@@ -823,11 +836,21 @@ export default function SociosView() {
                     )}
                   </div>
 
-                  <div className="bg-indigo-50/60 p-2.5 rounded-xl border border-indigo-100 text-xs flex justify-between items-center">
-                    <span className="text-indigo-900 font-medium">Aporte Sugerido:</span>
-                    <span className="font-extrabold text-indigo-700">
-                      {parseFloat(ext.monto_mensual_sugerido || 0).toFixed(2)} Bs/mes
-                    </span>
+                  <div className="bg-indigo-50/60 p-2.5 rounded-xl border border-indigo-100 text-xs space-y-1">
+                    <div className="flex justify-between items-center">
+                      <span className="text-indigo-900 font-medium">Aporte Mensual Base:</span>
+                      <span className="font-extrabold text-indigo-700">
+                        {parseFloat(ext.monto_mensual_sugerido || 0).toFixed(2)} Bs/mes
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2 text-[11px] text-indigo-800">
+                      <span className="px-1.5 py-0.5 bg-white rounded border border-indigo-200">
+                        Guardia: {(parseFloat(ext.monto_guardia_base ?? 40) || 0).toFixed(2)} Bs
+                      </span>
+                      <span className="px-1.5 py-0.5 bg-white rounded border border-indigo-200">
+                        Agua: {(parseFloat(ext.monto_agua_base ?? 10) || 0).toFixed(2)} Bs
+                      </span>
+                    </div>
                   </div>
 
                   {ext.referencia_ubicacion && (
@@ -1298,29 +1321,52 @@ export default function SociosView() {
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">Teléfono</label>
-                  <input
-                    type="text"
-                    value={extTelefono}
-                    onChange={(e) => setExtTelefono(e.target.value)}
-                    className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-300 rounded-xl"
-                  />
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Teléfono</label>
+                <input
+                  type="text"
+                  value={extTelefono}
+                  onChange={(e) => setExtTelefono(e.target.value)}
+                  className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-300 rounded-xl"
+                />
+              </div>
+
+              <div className="p-3 bg-indigo-50 border border-indigo-200 rounded-xl space-y-2">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="font-bold text-indigo-950">Desglose Mensual Base (Bs)</span>
+                  <span className="font-extrabold text-indigo-700">
+                    Total: {((parseFloat(extGuardiaBase) || 0) + (parseFloat(extAguaBase) || 0)).toFixed(2)} Bs/mes
+                  </span>
                 </div>
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    Monto Sugerido Mensual (Bs) <span className="text-red-500">*</span>
-                  </label>
-                  <input
-                    type="number"
-                    step="0.50"
-                    min="0"
-                    required
-                    value={extMontoSugerido}
-                    onChange={(e) => setExtMontoSugerido(e.target.value)}
-                    className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-xl font-bold"
-                  />
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[11px] font-semibold text-indigo-900 mb-1">
+                      Guardia (Bs) <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="number"
+                      step="0.50"
+                      min="0"
+                      required
+                      value={extGuardiaBase}
+                      onChange={(e) => setExtGuardiaBase(e.target.value)}
+                      className="w-full px-3 py-1.5 text-sm bg-white border border-indigo-300 rounded-xl font-bold"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-semibold text-indigo-900 mb-1">
+                      Agua (Bs) <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="number"
+                      step="0.50"
+                      min="0"
+                      required
+                      value={extAguaBase}
+                      onChange={(e) => setExtAguaBase(e.target.value)}
+                      className="w-full px-3 py-1.5 text-sm bg-white border border-indigo-300 rounded-xl font-bold"
+                    />
+                  </div>
                 </div>
               </div>
 

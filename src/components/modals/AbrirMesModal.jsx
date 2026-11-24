@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
 import { MESES } from '../../lib/formatters'
+import { calcularDesgloseRubrosBase } from '../../lib/calculosCobro'
 import FotoUploaderModal from './FotoUploaderModal'
 import { Zap, Camera, CheckCircle2, AlertCircle, X, ExternalLink } from 'lucide-react'
 
@@ -174,6 +175,13 @@ export default function AbrirMesModal({
             montoBase = tarifaNoSocio
           }
 
+          const rubros = calcularDesgloseRubrosBase({
+            cantidadPuestos: puestos,
+            montoBase,
+            montoLuzRedondeado: 0,
+            reglaCeroKwhAplicada: false,
+          })
+
           cobrosToInsert.push({
             unidad_id: unidad.id,
             periodo_id: periodoId,
@@ -184,6 +192,10 @@ export default function AbrirMesModal({
             cambio_tarifador: false,
             monto_base: montoBase,
             monto_luz_redondeado: 0,
+            monto_guardia: rubros.montoGuardia,
+            monto_agua: rubros.montoAgua,
+            monto_luz_grupo: rubros.montoLuzGrupo,
+            es_monto_editado: false,
             dias_prorroga: 0,
             monto_multa: 0,
             multa_perdonada: 0,

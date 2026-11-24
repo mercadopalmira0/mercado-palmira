@@ -7,6 +7,7 @@
  * incluyendo deudores de ciclos, aportantes externos y cumplimiento de puestos.
  */
 import { getNombreSocioCobro } from './formatters'
+import { calcularDesgloseRubrosBase } from './calculosCobro'
 
 function parseFecha(val) {
   if (!val) return null
@@ -158,10 +159,44 @@ export function calcularConsolidadoRendicion({
 
   let ingServiciosRegularesEf = 0
   let ingServiciosRegularesQr = 0
+  let guardiaSocios = 0
+  let aguaSocios = 0
+  let luzSocios = 0
+  let multasSocios = 0
+
   pagosServiciosRango.forEach((p) => {
     const m = parseFloat(p.monto) || 0
     if (p.metodo_pago === 'efectivo') ingServiciosRegularesEf += m
     if (p.metodo_pago === 'qr') ingServiciosRegularesQr += m
+
+    if (m <= 0) return
+    const c = p.cobros_servicios || {}
+    let g = parseFloat(c.monto_guardia)
+    let a = parseFloat(c.monto_agua)
+    let l = parseFloat(c.monto_luz_grupo)
+
+    if (!Number.isFinite(g) || !Number.isFinite(a) || !Number.isFinite(l)) {
+      const baseCalc = calcularDesgloseRubrosBase({
+        cantidadPuestos: c.cantidad_puestos_aplicada || 1,
+        montoBase: parseFloat(c.monto_base) || 0,
+        montoLuzRedondeado: parseFloat(c.monto_luz_redondeado) || 0,
+      })
+      if (!Number.isFinite(g)) g = baseCalc.montoGuardia
+      if (!Number.isFinite(a)) a = baseCalc.montoAgua
+      if (!Number.isFinite(l)) l = baseCalc.montoLuzGrupo
+    }
+
+    const sumRubros = Math.max(0, g + a + l)
+    const totalCobro = Math.max(parseFloat(c.total_a_pagar) || 0, sumRubros)
+    if (totalCobro > 0) {
+      const ratio = m / totalCobro
+      guardiaSocios += g * ratio
+      aguaSocios += a * ratio
+      luzSocios += l * ratio
+      multasSocios += Math.max(0, totalCobro - sumRubros) * ratio
+    } else {
+      guardiaSocios += m
+    }
   })
 
   // Aportantes Externos (Guardia y Agua) dentro del rango
@@ -173,10 +208,32 @@ export function calcularConsolidadoRendicion({
 
   let ingExternosEf = 0
   let ingExternosQr = 0
+  let guardiaExternos = 0
+  let aguaExternos = 0
+
   cobrosExternosRango.forEach((c) => {
     const m = parseFloat(c.monto_pagado) || 0
     if (c.metodo_pago === 'efectivo') ingExternosEf += m
     if (c.metodo_pago === 'qr') ingExternosQr += m
+
+    if (m <= 0) return
+    const g = parseFloat(c.monto_guardia)
+    const a = parseFloat(c.monto_agua)
+    if (Number.isFinite(g) || Number.isFinite(a)) {
+      const gg = Number.isFinite(g) ? g : 0
+      const aa = Number.isFinite(a) ? a : 0
+      const s = gg + aa
+      if (s > 0 && Math.abs(s - m) > 0.01) {
+        guardiaExternos += (gg / s) * m
+        aguaExternos += (aa / s) * m
+      } else {
+        guardiaExternos += gg
+        aguaExternos += aa
+      }
+    } else {
+      guardiaExternos += m * 0.8
+      aguaExternos += m * 0.2
+    }
   })
   const totalIngExternos = ingExternosEf + ingExternosQr
 
@@ -486,6 +543,19 @@ export function calcularConsolidadoRendicion({
 
     // Cumplimiento
     cumplimientoPuestos,
+
+    // Desglose Interno de Ingresos Caja Servicios (Guardia / Agua / Grupo Luz)
+    desgloseInternoServicios: {
+      guardiaSocios,
+      guardiaExternos,
+      totalGuardia: guardiaSocios + guardiaExternos,
+      aguaSocios,
+      aguaExternos,
+      totalAgua: aguaSocios + aguaExternos,
+      totalLuzGrupo: luzSocios,
+      totalMultasSocios: multasSocios,
+      totalDeudoresServicios: totalIngDeudoresServicios,
+    },
 
     // Listas
     pagosServiciosRango,

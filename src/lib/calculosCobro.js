@@ -1,5 +1,5 @@
 /**
- * Reglas de Cálculo de Cobros, Tarifas, Luz y Multas
+ * Reglas de Cálculo de Cobros, Tarifas, Luz, Multas y Desglose Interno (Guardia / Agua / Grupo Luz)
  * Secretaría de Hacienda - Mercado Palmira
  */
 
@@ -43,7 +43,6 @@ export function calcularMultaMora({
 
   const fechaVencimiento = calcularFechaVencimiento(mes, anio, diasProrroga)
 
-  // 1. Exención por Fecha de Pago Especial acordada con la directiva
   if (fechaPagoEspecial) {
     const [y, m, d] = fechaPagoEspecial.split('-').map(Number)
     const fechaEspecial = new Date(y, m - 1, d, 23, 59, 59)
@@ -56,7 +55,6 @@ export function calcularMultaMora({
     }
   }
 
-  // 2. Exención si ya abonó al menos el monto mínimo exento (35 Bs)
   const totalAbonadoAntes = pagosActivos
     .filter((p) => new Date(p.fecha_pago) <= fechaVencimiento)
     .reduce((sum, p) => sum + (parseFloat(p.monto) || 0), 0)
@@ -69,7 +67,6 @@ export function calcularMultaMora({
     }
   }
 
-  // 3. Cálculo de días de retraso a partir del vencimiento
   if (fechaActual <= fechaVencimiento) {
     return {
       diasRetraso: 0,
@@ -90,8 +87,36 @@ export function calcularMultaMora({
 }
 
 /**
+ * Calcula el desglose interno automático por rubros (Guardia, Agua y Grupo Luz):
+ * - Base por puesto: 40 Bs Guardia + 5 Bs Agua.
+ * - Resto de la cuota fija (ej. 25 Bs en tarifa 70, 10 Bs en tarifa 55, 13 Bs en variable) + consumo de luz -> Grupo Luz.
+ * - Si agrupa varios puestos (excepto regla 0 kWh que cobra 1 puesto cerrado de 55 Bs), multiplica Guardia y Agua por N puestos.
+ */
+export function calcularDesgloseRubrosBase({
+  cantidadPuestos = 1,
+  montoBase = 0,
+  montoLuzRedondeado = 0,
+  reglaCeroKwhAplicada = false,
+}) {
+  const puestosEfectivos = reglaCeroKwhAplicada ? 1 : Math.max(1, parseInt(cantidadPuestos, 10) || 1)
+  const baseNum = parseFloat(montoBase) || 0
+  const luzNum = parseFloat(montoLuzRedondeado) || 0
+
+  const montoGuardia = 40 * puestosEfectivos
+  const montoAgua = 5 * puestosEfectivos
+  const restoFijo = Math.max(0, baseNum - montoGuardia - montoAgua)
+  const montoLuzGrupo = restoFijo + luzNum
+
+  return {
+    montoGuardia,
+    montoAgua,
+    montoLuzGrupo,
+  }
+}
+
+/**
  * Calcula el desglose completo del cobro para una unidad de cobro en un mes dado.
- * Incluye soporte para campañas de perdonazo de multas.
+ * Respeta ediciones manuales por emergencia/reposición (esMontoEditado = true).
  */
 export function calcularDesgloseCobro({
   modalidadAplicada,
@@ -108,6 +133,10 @@ export function calcularDesgloseCobro({
   mes,
   anio,
   perdonazoActivo = null,
+  esMontoEditado = false,
+  montoGuardiaEditado = null,
+  montoAguaEditado = null,
+  montoLuzGrupoEditado = null,
 }) {
   const baseVariable = parseFloat(tarifas.base_variable_puesto) || 58
   const tarifaCerrado = parseFloat(tarifas.tarifa_fija_cerrado) || 55
@@ -145,6 +174,30 @@ export function calcularDesgloseCobro({
     montoBase = baseVariable
   }
 
+  let montoGuardia = 0
+  let montoAgua = 0
+  let montoLuzGrupo = 0
+
+  if (esMontoEditado) {
+    montoGuardia = parseFloat(montoGuardiaEditado) || 0
+    montoAgua = parseFloat(montoAguaEditado) || 0
+    montoLuzGrupo = parseFloat(montoLuzGrupoEditado) || 0
+  } else {
+    const rubros = calcularDesgloseRubrosBase({
+      cantidadPuestos,
+      montoBase,
+      montoLuzRedondeado,
+      reglaCeroKwhAplicada,
+    })
+    montoGuardia = rubros.montoGuardia
+    montoAgua = rubros.montoAgua
+    montoLuzGrupo = rubros.montoLuzGrupo
+  }
+
+  const subtotalRubros = esMontoEditado
+    ? montoGuardia + montoAgua + montoLuzGrupo
+    : montoBase + montoLuzRedondeado
+
   const { diasRetraso, multaCalculada, motivoExencion } = calcularMultaMora({
     mes,
     anio,
@@ -157,9 +210,8 @@ export function calcularDesgloseCobro({
   const manualPerdon = parseFloat(multaPerdonada) || 0
   const multaDespuesManual = Math.max(0, multaCalculada - manualPerdon)
 
-  // Aplicar descuento de campaña de Perdonazo si está vigente y aún hay multa pendiente por pagar
   const totalPagado = pagosActivos.reduce((sum, p) => sum + (parseFloat(p.monto) || 0), 0)
-  const yaPagadoCompletoSinPerdonazo = totalPagado >= montoBase + montoLuzRedondeado + multaDespuesManual && totalPagado > 0
+  const yaPagadoCompletoSinPerdonazo = totalPagado >= subtotalRubros + multaDespuesManual && totalPagado > 0
 
   let descuentoPerdonazo = 0
   let porcentajePerdonazo = 0
@@ -169,7 +221,7 @@ export function calcularDesgloseCobro({
   }
 
   const multaNeta = Math.max(0, multaDespuesManual - descuentoPerdonazo)
-  const totalAPagar = montoBase + montoLuzRedondeado + multaNeta
+  const totalAPagar = subtotalRubros + multaNeta
   const saldoPendiente = Math.max(0, totalAPagar - totalPagado)
 
   let estado = 'pendiente'
@@ -180,10 +232,14 @@ export function calcularDesgloseCobro({
   }
 
   return {
-    montoBase,
+    montoBase: esMontoEditado ? subtotalRubros : montoBase,
     consumoKwh,
-    montoLuzRedondeado,
+    montoLuzRedondeado: esMontoEditado ? 0 : montoLuzRedondeado,
     reglaCeroKwhAplicada,
+    montoGuardia,
+    montoAgua,
+    montoLuzGrupo,
+    esMontoEditado: Boolean(esMontoEditado),
     diasRetraso,
     montoMulta: multaCalculada,
     multaPerdonada: manualPerdon,

@@ -174,3 +174,30 @@ GRANT USAGE ON SCHEMA public TO authenticated, service_role;
 GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO authenticated, service_role;
 GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO authenticated, service_role;
 
+-- ============================================================
+-- DESGLOSE INTERNO (GUARDIA / AGUA / LUZ) Y MONTOS EDITABLES
+-- ============================================================
+
+-- 1. Desglose interno y ajuste manual en cobros de socios
+ALTER TABLE cobros_servicios
+  ADD COLUMN IF NOT EXISTS monto_guardia NUMERIC(10,2) DEFAULT 40,
+  ADD COLUMN IF NOT EXISTS monto_agua NUMERIC(10,2) DEFAULT 5,
+  ADD COLUMN IF NOT EXISTS monto_luz_grupo NUMERIC(10,2) DEFAULT 0, -- incluye consumo + alumbrado + basura / apoyo luz
+  ADD COLUMN IF NOT EXISTS es_monto_editado BOOLEAN DEFAULT FALSE,
+  ADD COLUMN IF NOT EXISTS motivo_edicion_monto TEXT;
+
+-- 2. Desglose interno en aportantes externos (Otra asociación: 40 Guardia + 10 Agua)
+ALTER TABLE aportantes_externos
+  ADD COLUMN IF NOT EXISTS monto_guardia_base NUMERIC(10,2) DEFAULT 40,
+  ADD COLUMN IF NOT EXISTS monto_agua_base NUMERIC(10,2) DEFAULT 10;
+
+ALTER TABLE cobros_externos
+  ADD COLUMN IF NOT EXISTS monto_guardia NUMERIC(10,2) DEFAULT 40,
+  ADD COLUMN IF NOT EXISTS monto_agua NUMERIC(10,2) DEFAULT 10,
+  ADD COLUMN IF NOT EXISTS es_monto_editado BOOLEAN DEFAULT FALSE,
+  ADD COLUMN IF NOT EXISTS motivo_edicion_monto TEXT;
+
+-- Recargar caché de Supabase
+NOTIFY pgrst, 'reload schema';
+
+

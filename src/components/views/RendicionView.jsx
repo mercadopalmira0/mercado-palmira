@@ -68,7 +68,9 @@ export default function RendicionView() {
         supabase.from('pagos_servicios').select(`
           id, monto, metodo_pago, nro_talonario_fisico, estado, fecha_pago,
           cobros_servicios (
-            id, total_a_pagar, nombre_socio_historico,
+            id, total_a_pagar, monto_base, monto_luz_redondeado, monto_multa, cantidad_puestos_aplicada,
+            monto_guardia, monto_agua, monto_luz_grupo, es_monto_editado,
+            nombre_socio_historico,
             periodos_mensuales (mes, anio),
             unidades_cobro (
               numero_identificador,
@@ -103,7 +105,7 @@ export default function RendicionView() {
           deudores_ciclos (caja, nombre_deudor)
         `),
         supabase.from('cobros_externos').select(`
-          id, anio, mes, monto_pagado, metodo_pago, nro_talonario_fisico, fecha_pago, anulado,
+          id, anio, mes, monto_pagado, monto_guardia, monto_agua, es_monto_editado, metodo_pago, nro_talonario_fisico, fecha_pago, anulado,
           aportantes_externos (nombre_completo, referencia_ubicacion)
         `),
         supabase.from('unidades_cobro').select('id, socio_responsable_id, cantidad_puestos, activo'),
@@ -763,6 +765,53 @@ export default function RendicionView() {
               </div>
             </div>
           </div>
+
+          {/* Desglose Interno de Ingresos Caja Servicios (Guardia / Agua / Grupo Luz) */}
+          {consolidado.desgloseInternoServicios && (
+            <div className="space-y-3 pt-1">
+              <h3 className="text-sm font-bold uppercase tracking-wider text-slate-800 flex items-center gap-1.5 border-b pb-1">
+                <Wallet className="w-4 h-4 text-emerald-700" />
+                Desglose Interno de Ingresos — Caja Servicios (Guardia / Agua / Luz)
+              </h3>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+                <div className="bg-slate-50 border border-slate-200 rounded-xl p-3">
+                  <span className="text-[10px] font-bold uppercase text-slate-600 block">Fondo Guardia</span>
+                  <p className="text-lg font-extrabold text-slate-900 mt-0.5">
+                    {consolidado.desgloseInternoServicios.totalGuardia.toFixed(2)} Bs
+                  </p>
+                  <p className="text-[11px] text-slate-500 mt-0.5">
+                    Socios: {consolidado.desgloseInternoServicios.guardiaSocios.toFixed(2)} Bs • Externos:{' '}
+                    {consolidado.desgloseInternoServicios.guardiaExternos.toFixed(2)} Bs
+                  </p>
+                </div>
+
+                <div className="bg-blue-50/70 border border-blue-200 rounded-xl p-3">
+                  <span className="text-[10px] font-bold uppercase text-blue-700 block">Fondo Agua</span>
+                  <p className="text-lg font-extrabold text-blue-900 mt-0.5">
+                    {consolidado.desgloseInternoServicios.totalAgua.toFixed(2)} Bs
+                  </p>
+                  <p className="text-[11px] text-blue-700 mt-0.5">
+                    Socios: {consolidado.desgloseInternoServicios.aguaSocios.toFixed(2)} Bs • Externos:{' '}
+                    {consolidado.desgloseInternoServicios.aguaExternos.toFixed(2)} Bs
+                  </p>
+                </div>
+
+                <div className="bg-amber-50/70 border border-amber-200 rounded-xl p-3">
+                  <span className="text-[10px] font-bold uppercase text-amber-700 block">
+                    Fondo Grupo Luz (Consumo + Alumb. + Basura)
+                  </span>
+                  <p className="text-lg font-extrabold text-amber-900 mt-0.5">
+                    {consolidado.desgloseInternoServicios.totalLuzGrupo.toFixed(2)} Bs
+                  </p>
+                  <p className="text-[11px] text-amber-700 mt-0.5">
+                    Multas mora: {consolidado.desgloseInternoServicios.totalMultasSocios.toFixed(2)} Bs • Deudores:{' '}
+                    {consolidado.desgloseInternoServicios.totalDeudoresServicios.toFixed(2)} Bs
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* CUADRO 2: Detalle de Egresos */}
           <div className="space-y-3 pt-2">
