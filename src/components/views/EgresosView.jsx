@@ -19,26 +19,33 @@ import {
   Shield,
   Save,
   Edit2,
-  Trash2
+  Trash2,
+  Zap,
+  Droplets,
+  Calendar,
+  ArrowRight
 } from 'lucide-react'
 
-const CATEGORIAS_SERVICIOS = [
+const SUGERENCIAS_SERVICIOS = [
   'Factura Luz General',
-  'Factura Agua Potable',
+  'Factura de Agua',
   'Sueldo Guardia',
   'Tasa de Aseo y Basura',
-  'Alumbrado Público / Pasillos',
-  'Gastos Operativos (Pasajes, Talonarios, Útiles)',
-  'Otro Gasto de Servicios',
+  'Alumbrado / Pasillos',
+  'Papelería / Talonarios',
+  'Viáticos / Pasajes',
+  'Imprevistos',
 ]
 
-const CATEGORIAS_AFILIACIONES = [
-  'Limpieza General del Mercado',
-  'Mantenimiento y Plomería',
-  'Pintura y Albañilería',
-  'Materiales y Compras del Mercado',
+const SUGERENCIAS_AFILIACIONES = [
+  'Mantenimiento',
+  'Limpieza',
+  'Viáticos / Salidas',
+  'Imprevistos',
+  'Papelería',
+  'Compra Insumos / Veneno',
+  'Apoyo Reunión Directiva',
   'Mejoras de Infraestructura',
-  'Otro Gasto de Afiliaciones',
 ]
 
 const TIPOS_GUARDIA = [
@@ -67,7 +74,7 @@ export default function EgresosView() {
   const [motivoAnulacion, setMotivoAnulacion] = useState('')
 
   const [caja, setCaja] = useState('servicios')
-  const [categoria, setCategoria] = useState(CATEGORIAS_SERVICIOS[0])
+  const [categoria, setCategoria] = useState('')
   const [descripcion, setDescripcion] = useState('')
   const [monto, setMonto] = useState('')
   const [metodoPago, setMetodoPago] = useState('efectivo')
@@ -75,9 +82,36 @@ export default function EgresosView() {
   const [reciboDriveUrl, setReciboDriveUrl] = useState('')
   const [saving, setSaving] = useState(false)
 
-  // Sueldo y Adelantos del Guardia
+  // Control mensual (Gastos Fijos: Luz, Agua, Sueldo Guardia)
   const [guardiaMes, setGuardiaMes] = useState(today.getMonth() + 1)
   const [guardiaAnio, setGuardiaAnio] = useState(today.getFullYear())
+  const [periodoFijo, setPeriodoFijo] = useState(null)
+  const [loadingFijos, setLoadingFijos] = useState(false)
+
+  // Modal Pago Factura Luz
+  const [isPagoLuzOpen, setIsPagoLuzOpen] = useState(false)
+  const [fechaPagoLuz, setFechaPagoLuz] = useState(getLocalDateStr())
+  const [metodoPagoLuz, setMetodoPagoLuz] = useState('efectivo')
+  const [fotoPagoLuz, setFotoPagoLuz] = useState('')
+  const [isPhotoLuzOpen, setIsPhotoLuzOpen] = useState(false)
+  const [savingLuzPago, setSavingLuzPago] = useState(false)
+
+  // Modal Cargar / Editar Factura de Agua (Pendiente de pago)
+  const [isCargaAguaOpen, setIsCargaAguaOpen] = useState(false)
+  const [montoFacturaAguaInput, setMontoFacturaAguaInput] = useState('')
+  const [fotoFacturaAguaInput, setFotoFacturaAguaInput] = useState('')
+  const [isPhotoFacturaAguaOpen, setIsPhotoFacturaAguaOpen] = useState(false)
+  const [savingCargaAgua, setSavingCargaAgua] = useState(false)
+
+  // Modal Registrar Pago Factura de Agua
+  const [isPagoAguaOpen, setIsPagoAguaOpen] = useState(false)
+  const [fechaPagoAgua, setFechaPagoAgua] = useState(getLocalDateStr())
+  const [metodoPagoAgua, setMetodoPagoAgua] = useState('efectivo')
+  const [fotoPagoAgua, setFotoPagoAgua] = useState('')
+  const [isPhotoPagoAguaOpen, setIsPhotoPagoAguaOpen] = useState(false)
+  const [savingPagoAgua, setSavingPagoAgua] = useState(false)
+
+  // Sueldo y Adelantos del Guardia
   const [tarifaId, setTarifaId] = useState(null)
   const [sueldoMensual, setSueldoMensual] = useState(0)
   const [sueldoOriginal, setSueldoOriginal] = useState(0)
@@ -131,8 +165,9 @@ export default function EgresosView() {
 
   const fetchGuardiaData = async () => {
     setLoadingGuardia(true)
+    setLoadingFijos(true)
     try {
-      const [{ data: tData }, { data: pgData, error: pgErr }] = await Promise.all([
+      const [{ data: tData }, { data: pgData, error: pgErr }, { data: pData, error: pErr }] = await Promise.all([
         supabase.from('configuracion_tarifas').select('id, sueldo_guardia_mensual').limit(1).maybeSingle(),
         supabase
           .from('pagos_guardia')
@@ -141,6 +176,12 @@ export default function EgresosView() {
           .eq('anio', guardiaAnio)
           .order('fecha_pago', { ascending: false })
           .order('created_at', { ascending: false }),
+        supabase
+          .from('periodos_mensuales')
+          .select('*')
+          .eq('mes', guardiaMes)
+          .eq('anio', guardiaAnio)
+          .maybeSingle(),
       ])
 
       if (tData) {
@@ -150,12 +191,15 @@ export default function EgresosView() {
         setSueldoOriginal(s)
       }
       if (pgErr) throw pgErr
+      if (pErr) throw pErr
       setPagosGuardia(pgData || [])
+      setPeriodoFijo(pData || null)
     } catch (err) {
       console.error(err)
-      setStatusMessage({ type: 'error', text: 'Error al cargar pagos del guardia: ' + err.message })
+      setStatusMessage({ type: 'error', text: 'Error al cargar control mensual: ' + err.message })
     } finally {
       setLoadingGuardia(false)
+      setLoadingFijos(false)
     }
   }
 
@@ -169,14 +213,12 @@ export default function EgresosView() {
 
   const handleCajaChange = (newCaja) => {
     setCaja(newCaja)
-    const cats = newCaja === 'servicios' ? CATEGORIAS_SERVICIOS : CATEGORIAS_AFILIACIONES
-    if (!cats.includes(categoria)) setCategoria(cats[0])
   }
 
   const openNewEgresoModal = () => {
     setEditingEgreso(null)
     setCaja('servicios')
-    setCategoria(CATEGORIAS_SERVICIOS[0])
+    setCategoria('')
     setDescripcion('')
     setMonto('')
     setMetodoPago('efectivo')
@@ -188,7 +230,7 @@ export default function EgresosView() {
   const openEditEgresoModal = (eg) => {
     setEditingEgreso(eg)
     setCaja(eg.caja || 'servicios')
-    setCategoria(eg.categoria || CATEGORIAS_SERVICIOS[0])
+    setCategoria(eg.categoria || '')
     setDescripcion(eg.descripcion || '')
     setMonto(String(eg.monto ?? ''))
     setMetodoPago(eg.metodo_pago || 'efectivo')
@@ -200,6 +242,10 @@ export default function EgresosView() {
   const handleSaveEgreso = async (e) => {
     e.preventDefault()
     const montoNum = parseFloat(monto)
+    if (!categoria.trim()) {
+      setStatusMessage({ type: 'error', text: 'Ingresa o selecciona una categoría / concepto.' })
+      return
+    }
     if (!montoNum || montoNum <= 0) {
       setStatusMessage({ type: 'error', text: 'Ingresa un monto válido mayor a 0.' })
       return
@@ -216,12 +262,13 @@ export default function EgresosView() {
 
     setSaving(true)
     try {
+      const catClean = categoria.trim()
       const { data, error } = await supabase
         .from('egresos')
         .insert([
           {
             caja,
-            categoria,
+            categoria: catClean,
             descripcion: descripcion.trim(),
             monto: montoNum,
             metodo_pago: metodoPago,
@@ -239,11 +286,11 @@ export default function EgresosView() {
         usuarioId: user?.id,
         accion: 'REGISTRO_EGRESO',
         detalleJson: {
-          descripcion: `Egreso ${montoNum.toFixed(2)} Bs en Caja ${caja} (${categoria}): ${descripcion.trim()}`,
+          descripcion: `Egreso ${montoNum.toFixed(2)} Bs en Caja ${caja} (${catClean}): ${descripcion.trim()}`,
           tabla: 'egresos',
           registro_id: data?.id,
           caja,
-          categoria,
+          categoria: catClean,
           monto: montoNum,
           metodo_pago: metodoPago,
           fecha,
@@ -463,9 +510,10 @@ export default function EgresosView() {
     try {
       if (entity === 'egreso' && tipo === 'edicion') {
         const montoNum = parseFloat(monto)
+        const catClean = categoria.trim()
         const datosNuevos = {
           caja,
-          categoria,
+          categoria: catClean,
           descripcion: descripcion.trim(),
           monto: montoNum,
           metodo_pago: metodoPago,
@@ -640,6 +688,236 @@ export default function EgresosView() {
     .filter((p) => !p.anulado)
     .reduce((s, p) => s + (parseFloat(p.monto) || 0), 0)
   const saldoPendienteGuardia = Math.max(0, (parseFloat(sueldoMensual) || 0) - totalAdelantosGuardia)
+
+  // Handlers de Gastos Fijos del Mes (Luz y Agua)
+  const openPagoLuzModal = () => {
+    setFechaPagoLuz(getLocalDateStr())
+    setMetodoPagoLuz('efectivo')
+    setFotoPagoLuz(periodoFijo?.foto_comprobante_pago_luz || '')
+    setIsPagoLuzOpen(true)
+  }
+
+  const handleConfirmarPagoLuz = async (e) => {
+    e.preventDefault()
+    if (!periodoFijo) return
+    const montoFactura = parseFloat(periodoFijo.factura_luz_bs) || 0
+    if (montoFactura <= 0) {
+      setStatusMessage({ type: 'error', text: 'El monto total de la factura de luz debe ser mayor a 0.' })
+      return
+    }
+    setSavingLuzPago(true)
+    try {
+      const desc = `Pago Factura Luz - ${MESES[guardiaMes]} ${guardiaAnio}`
+      const { error: egErr } = await supabase.from('egresos').insert([
+        {
+          caja: 'servicios',
+          categoria: 'Factura Luz General',
+          descripcion: desc,
+          monto: montoFactura,
+          metodo_pago: metodoPagoLuz,
+          fecha: fechaPagoLuz,
+          recibo_drive_url: fotoPagoLuz || null,
+          estado: 'activo',
+        },
+      ])
+      if (egErr) throw egErr
+
+      const { error: pErr } = await supabase
+        .from('periodos_mensuales')
+        .update({
+          estado_pago_factura: 'pagada',
+          fecha_pago_factura: fechaPagoLuz,
+          metodo_pago_factura: metodoPagoLuz,
+          foto_comprobante_pago_luz: fotoPagoLuz || null,
+        })
+        .eq('id', periodoFijo.id)
+      if (pErr) throw pErr
+
+      await registrarAuditoria({
+        usuarioId: user?.id,
+        accion: 'PAGO_FACTURA_LUZ',
+        detalleJson: {
+          descripcion: desc,
+          periodo_id: periodoFijo.id,
+          monto: montoFactura,
+          metodo_pago: metodoPagoLuz,
+          fecha_pago: fechaPagoLuz,
+        },
+      })
+
+      setStatusMessage({
+        type: 'success',
+        text: `¡Factura de luz de ${MESES[guardiaMes]} ${guardiaAnio} pagada y descontada de Caja Servicios!`,
+      })
+      setIsPagoLuzOpen(false)
+      await Promise.all([fetchEgresos(), fetchGuardiaData()])
+    } catch (err) {
+      console.error(err)
+      setStatusMessage({ type: 'error', text: 'Error al registrar pago de luz: ' + err.message })
+    } finally {
+      setSavingLuzPago(false)
+    }
+  }
+
+  const openCargaAguaModal = () => {
+    setMontoFacturaAguaInput(
+      periodoFijo?.factura_agua_bs && parseFloat(periodoFijo.factura_agua_bs) > 0
+        ? String(periodoFijo.factura_agua_bs)
+        : ''
+    )
+    setFotoFacturaAguaInput(periodoFijo?.foto_factura_agua || '')
+    setIsCargaAguaOpen(true)
+  }
+
+  const handleSaveCargaAgua = async (e) => {
+    e.preventDefault()
+    const montoNum = parseFloat(montoFacturaAguaInput) || 0
+    if (montoNum <= 0) {
+      setStatusMessage({ type: 'error', text: 'Ingresa un monto válido mayor a 0 para la factura de agua.' })
+      return
+    }
+    setSavingCargaAgua(true)
+    try {
+      if (periodoFijo?.id) {
+        const { error } = await supabase
+          .from('periodos_mensuales')
+          .update({
+            factura_agua_bs: montoNum,
+            foto_factura_agua: fotoFacturaAguaInput || null,
+            estado_pago_agua: periodoFijo.estado_pago_agua || 'pendiente_pago',
+          })
+          .eq('id', periodoFijo.id)
+        if (error) throw error
+
+        await registrarAuditoria({
+          usuarioId: user?.id,
+          accion: 'CARGA_FACTURA_AGUA',
+          detalleJson: {
+            descripcion: `Factura de Agua ${MESES[guardiaMes]} ${guardiaAnio}: ${montoNum.toFixed(2)} Bs (pendiente_pago)`,
+            periodo_id: periodoFijo.id,
+            factura_agua_bs: montoNum,
+            foto_factura_agua: fotoFacturaAguaInput || null,
+          },
+        })
+      } else {
+        const { data: createdP, error } = await supabase
+          .from('periodos_mensuales')
+          .insert([
+            {
+              mes: guardiaMes,
+              anio: guardiaAnio,
+              factura_luz_bs: 0,
+              factura_luz_kwh: 0,
+              precio_kwh_calculado: 0,
+              factura_agua_bs: montoNum,
+              foto_factura_agua: fotoFacturaAguaInput || null,
+              estado_pago_agua: 'pendiente_pago',
+            },
+          ])
+          .select()
+          .single()
+        if (error) throw error
+
+        await registrarAuditoria({
+          usuarioId: user?.id,
+          accion: 'CARGA_FACTURA_AGUA',
+          detalleJson: {
+            descripcion: `Factura de Agua ${MESES[guardiaMes]} ${guardiaAnio}: ${montoNum.toFixed(2)} Bs (pendiente_pago)`,
+            periodo_id: createdP?.id,
+            factura_agua_bs: montoNum,
+            foto_factura_agua: fotoFacturaAguaInput || null,
+          },
+        })
+      }
+
+      setStatusMessage({
+        type: 'success',
+        text: `Factura de agua (${montoNum.toFixed(2)} Bs) cargada como Pendiente de Pago (sin descontar caja todavía).`,
+      })
+      setIsCargaAguaOpen(false)
+      await fetchGuardiaData()
+    } catch (err) {
+      console.error(err)
+      setStatusMessage({ type: 'error', text: 'Error al guardar factura de agua: ' + err.message })
+    } finally {
+      setSavingCargaAgua(false)
+    }
+  }
+
+  const openPagoAguaModal = () => {
+    setFechaPagoAgua(getLocalDateStr())
+    setMetodoPagoAgua('efectivo')
+    setFotoPagoAgua(periodoFijo?.foto_comprobante_pago_agua || '')
+    setIsPagoAguaOpen(true)
+  }
+
+  const handleConfirmarPagoAgua = async (e) => {
+    e.preventDefault()
+    if (!periodoFijo) return
+    const montoAgua = parseFloat(periodoFijo.factura_agua_bs) || 0
+    if (montoAgua <= 0) {
+      setStatusMessage({ type: 'error', text: 'Primero carga el monto de la factura de agua del mes.' })
+      return
+    }
+    setSavingPagoAgua(true)
+    try {
+      const desc = `Pago Factura de Agua - ${MESES[guardiaMes]} ${guardiaAnio}`
+      const { data: egresoCreado, error: egErr } = await supabase
+        .from('egresos')
+        .insert([
+          {
+            caja: 'servicios',
+            categoria: 'Factura de Agua',
+            descripcion: desc,
+            monto: montoAgua,
+            metodo_pago: metodoPagoAgua,
+            fecha: fechaPagoAgua,
+            recibo_drive_url: fotoPagoAgua || null,
+            estado: 'activo',
+          },
+        ])
+        .select()
+        .single()
+      if (egErr) throw egErr
+
+      const { error: pErr } = await supabase
+        .from('periodos_mensuales')
+        .update({
+          estado_pago_agua: 'pagada',
+          fecha_pago_agua: fechaPagoAgua,
+          metodo_pago_agua: metodoPagoAgua,
+          foto_comprobante_pago_agua: fotoPagoAgua || null,
+          egreso_agua_id: egresoCreado.id,
+        })
+        .eq('id', periodoFijo.id)
+      if (pErr) throw pErr
+
+      await registrarAuditoria({
+        usuarioId: user?.id,
+        accion: 'PAGO_FACTURA_AGUA',
+        detalleJson: {
+          descripcion: desc,
+          periodo_id: periodoFijo.id,
+          egreso_agua_id: egresoCreado.id,
+          monto: montoAgua,
+          metodo_pago: metodoPagoAgua,
+          fecha_pago: fechaPagoAgua,
+        },
+      })
+
+      setStatusMessage({
+        type: 'success',
+        text: `¡Factura de agua de ${MESES[guardiaMes]} ${guardiaAnio} pagada (${montoAgua.toFixed(2)} Bs) y descontada de Caja Servicios!`,
+      })
+      setIsPagoAguaOpen(false)
+      await Promise.all([fetchEgresos(), fetchGuardiaData()])
+    } catch (err) {
+      console.error(err)
+      setStatusMessage({ type: 'error', text: 'Error al registrar pago de agua: ' + err.message })
+    } finally {
+      setSavingPagoAgua(false)
+    }
+  }
 
   return (
     <div className="space-y-6">
@@ -938,6 +1216,304 @@ export default function EgresosView() {
         </div>
       ) : (
         <>
+          {/* Panel Superior: Gastos Fijos del Mes (Luz, Agua, Guardia) */}
+          <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-3">
+              <div>
+                <h3 className="text-sm font-extrabold text-slate-900 flex items-center gap-2">
+                  <Calendar className="w-4 h-4 text-amber-600" />
+                  <span>Gastos Fijos del Mes — Caja Servicios</span>
+                </h3>
+                <p className="text-[11px] text-slate-500 mt-0.5">
+                  Control mensual de facturas obligatorias (Luz, Agua) y adelantos del guardia.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2 text-xs">
+                <span className="font-semibold text-slate-600">Mes:</span>
+                <div className="flex items-center bg-slate-50 border border-slate-200 rounded-xl p-1">
+                  <select
+                    value={guardiaMes}
+                    onChange={(e) => setGuardiaMes(parseInt(e.target.value, 10))}
+                    className="bg-transparent font-bold text-slate-800 py-1 px-2 focus:outline-none"
+                  >
+                    {MESES.slice(1).map((m, i) => (
+                      <option key={i + 1} value={i + 1}>
+                        {m}
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    value={guardiaAnio}
+                    onChange={(e) => setGuardiaAnio(parseInt(e.target.value, 10))}
+                    className="bg-transparent font-bold text-slate-800 py-1 px-2 border-l border-slate-200 focus:outline-none"
+                  >
+                    {[2024, 2025, 2026, 2027, 2028].map((y) => (
+                      <option key={y} value={y}>
+                        {y}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            {(() => {
+              const montoLuz = parseFloat(periodoFijo?.factura_luz_bs) || 0
+              const luzCargada = Boolean(periodoFijo && montoLuz > 0)
+              const luzPagada = periodoFijo?.estado_pago_factura === 'pagada'
+
+              const montoAgua = parseFloat(periodoFijo?.factura_agua_bs) || 0
+              const aguaCargada = Boolean(periodoFijo && montoAgua > 0)
+              const aguaPagada = periodoFijo?.estado_pago_agua === 'pagada'
+
+              return (
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  {/* Tarjeta 1: Factura de Luz */}
+                  <div className="rounded-2xl p-4 border border-amber-200 bg-amber-50/40 flex flex-col justify-between gap-3">
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-xs font-extrabold text-amber-900 flex items-center gap-1.5">
+                          <Zap className="w-4 h-4 text-amber-600" />
+                          <span>Factura de Luz</span>
+                        </span>
+                        {luzPagada ? (
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800">
+                            Pagada
+                          </span>
+                        ) : luzCargada ? (
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800">
+                            Pendiente de pago
+                          </span>
+                        ) : (
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-500">
+                            Sin cargar
+                          </span>
+                        )}
+                      </div>
+
+                      <p className="text-2xl font-black text-slate-900">
+                        {montoLuz.toFixed(2)} <span className="text-xs font-semibold text-slate-500">Bs</span>
+                      </p>
+
+                      {luzCargada ? (
+                        <div className="text-[11px] text-slate-600 space-y-0.5">
+                          {(parseFloat(periodoFijo?.factura_energia_bs) || 0) > 0 && (
+                            <p>
+                              Energía: {parseFloat(periodoFijo.factura_energia_bs).toFixed(2)} • Alumb:{' '}
+                              {parseFloat(periodoFijo.factura_alumbrado_bs || 0).toFixed(2)} • Basura:{' '}
+                              {parseFloat(periodoFijo.factura_basura_bs || 0).toFixed(2)}
+                            </p>
+                          )}
+                          {periodoFijo?.factura_luz_drive_url && (
+                            <a
+                              href={periodoFijo.factura_luz_drive_url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="inline-flex items-center gap-1 text-blue-600 font-semibold hover:underline"
+                            >
+                              <ExternalLink className="w-3 h-3" />
+                              <span>Ver factura</span>
+                            </a>
+                          )}
+                          {luzPagada && (
+                            <p className="text-emerald-700 font-medium">
+                              Pagada el {periodoFijo.fecha_pago_factura} ({periodoFijo.metodo_pago_factura === 'qr' ? 'QR' : 'Efectivo'})
+                              {periodoFijo.foto_comprobante_pago_luz && (
+                                <>
+                                  {' • '}
+                                  <a
+                                    href={periodoFijo.foto_comprobante_pago_luz}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="underline font-bold"
+                                  >
+                                    Comprobante
+                                  </a>
+                                </>
+                              )}
+                            </p>
+                          )}
+                        </div>
+                      ) : (
+                        <p className="text-[11px] text-slate-500">
+                          Carga la factura de luz al abrir {MESES[guardiaMes]} en <strong>Cobros</strong>.
+                        </p>
+                      )}
+                    </div>
+
+                    {isAdmin && luzCargada && !luzPagada && (
+                      <button
+                        type="button"
+                        onClick={openPagoLuzModal}
+                        className="w-full py-2 px-3 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 shadow-sm"
+                      >
+                        <CheckCircle2 className="w-3.5 h-3.5" />
+                        <span>Registrar Pago de Luz</span>
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Tarjeta 2: Factura de Agua */}
+                  <div className="rounded-2xl p-4 border border-blue-200 bg-blue-50/40 flex flex-col justify-between gap-3">
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-xs font-extrabold text-blue-900 flex items-center gap-1.5">
+                          <Droplets className="w-4 h-4 text-blue-600" />
+                          <span>Factura de Agua</span>
+                        </span>
+                        {aguaPagada ? (
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800">
+                            Pagada
+                          </span>
+                        ) : aguaCargada ? (
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800">
+                            Pendiente de pago
+                          </span>
+                        ) : (
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-500">
+                            Sin cargar
+                          </span>
+                        )}
+                      </div>
+
+                      <p className="text-2xl font-black text-slate-900">
+                        {montoAgua.toFixed(2)} <span className="text-xs font-semibold text-slate-500">Bs</span>
+                      </p>
+
+                      <div className="text-[11px] text-slate-600 space-y-0.5">
+                        {periodoFijo?.foto_factura_agua && (
+                          <a
+                            href={periodoFijo.foto_factura_agua}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex items-center gap-1 text-blue-600 font-semibold hover:underline"
+                          >
+                            <ExternalLink className="w-3 h-3" />
+                            <span>Ver factura agua</span>
+                          </a>
+                        )}
+                        {aguaPagada ? (
+                          <p className="text-emerald-700 font-medium">
+                            Pagada el {periodoFijo.fecha_pago_agua} ({periodoFijo.metodo_pago_agua === 'qr' ? 'QR' : 'Efectivo'})
+                            {periodoFijo.foto_comprobante_pago_agua && (
+                              <>
+                                {' • '}
+                                <a
+                                  href={periodoFijo.foto_comprobante_pago_agua}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="underline font-bold"
+                                >
+                                  Comprobante
+                                </a>
+                              </>
+                            )}
+                          </p>
+                        ) : !aguaCargada ? (
+                          <p className="text-slate-500">
+                            Carga la factura del mes sin descontar caja hasta pagarla.
+                          </p>
+                        ) : null}
+                      </div>
+                    </div>
+
+                    {isAdmin && (
+                      <div className="flex flex-wrap gap-2">
+                        {!aguaPagada && (
+                          <button
+                            type="button"
+                            onClick={openCargaAguaModal}
+                            className="flex-1 py-2 px-3 bg-white hover:bg-blue-50 text-blue-800 border border-blue-300 rounded-xl text-xs font-bold flex items-center justify-center gap-1"
+                          >
+                            <Camera className="w-3.5 h-3.5" />
+                            <span>{aguaCargada ? 'Editar Factura' : 'Cargar Factura'}</span>
+                          </button>
+                        )}
+                        {aguaCargada && !aguaPagada && (
+                          <button
+                            type="button"
+                            onClick={openPagoAguaModal}
+                            className="flex-1 py-2 px-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1 shadow-sm"
+                          >
+                            <CheckCircle2 className="w-3.5 h-3.5" />
+                            <span>Registrar Pago de Agua</span>
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Tarjeta 3: Sueldo del Guardia */}
+                  <div className="rounded-2xl p-4 border border-emerald-200 bg-emerald-50/40 flex flex-col justify-between gap-3">
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-xs font-extrabold text-emerald-900 flex items-center gap-1.5">
+                          <Shield className="w-4 h-4 text-emerald-600" />
+                          <span>Sueldo del Guardia</span>
+                        </span>
+                        {saldoPendienteGuardia <= 0 && (parseFloat(sueldoMensual) || 0) > 0 ? (
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800">
+                            Cubierto
+                          </span>
+                        ) : (
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800">
+                            Saldo pendiente
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="grid grid-cols-3 gap-1.5 text-[11px] bg-white/80 p-2 rounded-xl border border-emerald-100">
+                        <div>
+                          <span className="text-slate-400 block">Sueldo</span>
+                          <strong className="text-slate-900">{(parseFloat(sueldoMensual) || 0).toFixed(0)} Bs</strong>
+                        </div>
+                        <div>
+                          <span className="text-slate-400 block">Adelantos</span>
+                          <strong className="text-emerald-700">{totalAdelantosGuardia.toFixed(0)} Bs</strong>
+                        </div>
+                        <div>
+                          <span className="text-slate-400 block">Pendiente</span>
+                          <strong className="text-amber-700">{saldoPendienteGuardia.toFixed(0)} Bs</strong>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setActiveTab('guardia')}
+                        className="flex-1 py-2 px-3 bg-white hover:bg-emerald-50 text-emerald-800 border border-emerald-300 rounded-xl text-xs font-bold flex items-center justify-center gap-1"
+                      >
+                        <span>Ir a Guardia</span>
+                        <ArrowRight className="w-3.5 h-3.5" />
+                      </button>
+                      {isAdmin && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEditingGuardia(null)
+                            setGTipo('adelanto_quincena')
+                            setGMonto('')
+                            setGFecha(getLocalDateStr())
+                            setGMetodo('efectivo')
+                            setGObs('')
+                            setGFotoUrl('')
+                            setIsGuardiaModalOpen(true)
+                          }}
+                          className="flex-1 py-2 px-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1 shadow-sm"
+                        >
+                          <PlusCircle className="w-3.5 h-3.5" />
+                          <span>Adelanto / Pago</span>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )
+            })()}
+          </div>
+
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-sm">
               <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-700 block">Egresos Caja Servicios</span>
@@ -1170,14 +1746,43 @@ export default function EgresosView() {
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">Categoría</label>
-                <select value={categoria} onChange={(e) => setCategoria(e.target.value)} className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-300 rounded-xl">
-                  {(caja === 'servicios' ? CATEGORIAS_SERVICIOS : CATEGORIAS_AFILIACIONES).map((cat) => (
-                    <option key={cat} value={cat}>
-                      {cat}
-                    </option>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Categoría / Concepto <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  required
+                  list="egreso-cat-suggestions"
+                  value={categoria}
+                  onChange={(e) => setCategoria(e.target.value)}
+                  placeholder={
+                    caja === 'afiliaciones'
+                      ? 'Ej. Pasajes trámite alcaldía, Compra veneno, Imprevistos...'
+                      : 'Ej. Factura de Agua, Papelería, Pasajes...'
+                  }
+                  className="w-full px-3 py-2 text-xs bg-white border border-slate-300 rounded-xl font-medium focus:ring-2 focus:ring-amber-500 focus:outline-none"
+                />
+                <datalist id="egreso-cat-suggestions">
+                  {(caja === 'servicios' ? SUGERENCIAS_SERVICIOS : SUGERENCIAS_AFILIACIONES).map((sug) => (
+                    <option key={sug} value={sug} />
                   ))}
-                </select>
+                </datalist>
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {(caja === 'servicios' ? SUGERENCIAS_SERVICIOS : SUGERENCIAS_AFILIACIONES).map((sug) => (
+                    <button
+                      key={sug}
+                      type="button"
+                      onClick={() => setCategoria(sug)}
+                      className={`px-2 py-1 rounded-lg text-[11px] font-semibold border transition-colors ${
+                        categoria === sug
+                          ? 'bg-slate-900 text-white border-slate-900'
+                          : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
+                      }`}
+                    >
+                      {sug}
+                    </button>
+                  ))}
+                </div>
               </div>
 
               <div>
@@ -1347,6 +1952,313 @@ export default function EgresosView() {
             anio={guardiaAnio}
             mes={guardiaMes}
             customName={`Vale_Guardia_${guardiaAnio}-${guardiaMes}_${Date.now()}.jpg`}
+          />
+        </div>
+      )}
+
+      {/* Modal: Registrar Pago de Factura de Luz */}
+      {isPagoLuzOpen && periodoFijo && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-sm overflow-y-auto">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-md my-8 overflow-hidden">
+            <div className="bg-slate-900 px-6 py-4 text-white flex items-center justify-between">
+              <div>
+                <h3 className="font-bold text-base">Registrar Pago de Factura de Luz</h3>
+                <p className="text-xs text-slate-400">
+                  {MESES[guardiaMes]} {guardiaAnio} • Total: {parseFloat(periodoFijo.factura_luz_bs || 0).toFixed(2)} Bs
+                </p>
+              </div>
+              <button onClick={() => setIsPagoLuzOpen(false)}>
+                <X className="w-5 h-5 text-slate-400 hover:text-white" />
+              </button>
+            </div>
+
+            <form onSubmit={handleConfirmarPagoLuz} className="p-6 space-y-4">
+              <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-900">
+                Se marcará la factura como <strong>Pagada</strong> y se creará el egreso automático en{' '}
+                <strong>Caja Servicios</strong> por <strong>{parseFloat(periodoFijo.factura_luz_bs || 0).toFixed(2)} Bs</strong>.
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Fecha Real de Pago</label>
+                <input
+                  type="date"
+                  required
+                  value={fechaPagoLuz}
+                  onChange={(e) => setFechaPagoLuz(e.target.value)}
+                  className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-300 rounded-xl"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1.5">Método de Pago</label>
+                <div className="grid grid-cols-2 gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setMetodoPagoLuz('efectivo')}
+                    className={`py-2 px-3 rounded-xl border text-xs font-bold flex items-center justify-center gap-2 ${
+                      metodoPagoLuz === 'efectivo'
+                        ? 'bg-emerald-600 text-white border-emerald-600'
+                        : 'bg-slate-50 text-slate-700 border-slate-300'
+                    }`}
+                  >
+                    <Coins className="w-4 h-4" />
+                    <span>Efectivo</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setMetodoPagoLuz('qr')}
+                    className={`py-2 px-3 rounded-xl border text-xs font-bold flex items-center justify-center gap-2 ${
+                      metodoPagoLuz === 'qr'
+                        ? 'bg-blue-600 text-white border-blue-600'
+                        : 'bg-slate-50 text-slate-700 border-slate-300'
+                    }`}
+                  >
+                    <QrCode className="w-4 h-4" />
+                    <span>QR / Banco</span>
+                  </button>
+                </div>
+              </div>
+
+              <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-xs">
+                <span className="text-slate-600">Comprobante Pagado (Drive):</span>
+                <div className="flex items-center gap-2">
+                  {fotoPagoLuz && (
+                    <a href={fotoPagoLuz} target="_blank" rel="noreferrer" className="text-blue-600 underline">
+                      Ver
+                    </a>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setIsPhotoLuzOpen(true)}
+                    className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 rounded-xl font-semibold text-slate-700 flex items-center gap-1"
+                  >
+                    <Camera className="w-3.5 h-3.5" />
+                    <span>{fotoPagoLuz ? 'Cambiar Foto' : 'Subir Comprobante'}</span>
+                  </button>
+                </div>
+              </div>
+
+              <div className="pt-2 flex justify-end gap-2 border-t border-slate-100">
+                <button type="button" onClick={() => setIsPagoLuzOpen(false)} className="px-4 py-2 text-xs text-slate-600">
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={savingLuzPago}
+                  className="px-5 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold flex items-center gap-1"
+                >
+                  <CheckCircle2 className="w-4 h-4" />
+                  <span>{savingLuzPago ? 'Registrando...' : 'Confirmar Pago de Luz'}</span>
+                </button>
+              </div>
+            </form>
+          </div>
+
+          <FotoUploaderModal
+            isOpen={isPhotoLuzOpen}
+            onClose={() => setIsPhotoLuzOpen(false)}
+            onPhotoSaved={(url) => setFotoPagoLuz(url)}
+            currentUrl={fotoPagoLuz}
+            titulo="Comprobante de Pago Factura de Luz"
+            categoria="Facturas_Generales"
+            anio={guardiaAnio}
+            mes={guardiaMes}
+            customName={`Pago_Factura_Luz_${guardiaAnio}-${guardiaMes}.jpg`}
+          />
+        </div>
+      )}
+
+      {/* Modal: Cargar / Editar Factura de Agua (Pendiente de Pago) */}
+      {isCargaAguaOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-sm overflow-y-auto">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-md my-8 overflow-hidden">
+            <div className="bg-slate-900 px-6 py-4 text-white flex items-center justify-between">
+              <div>
+                <h3 className="font-bold text-base">Factura de Agua del Mes</h3>
+                <p className="text-xs text-slate-400">
+                  {MESES[guardiaMes]} {guardiaAnio} • Queda en Pendiente de Pago (sin descontar caja)
+                </p>
+              </div>
+              <button onClick={() => setIsCargaAguaOpen(false)}>
+                <X className="w-5 h-5 text-slate-400 hover:text-white" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveCargaAgua} className="p-6 space-y-4">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Monto Factura de Agua (Bs) <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="number"
+                  step="0.50"
+                  min="0.50"
+                  required
+                  value={montoFacturaAguaInput}
+                  onChange={(e) => setMontoFacturaAguaInput(e.target.value)}
+                  placeholder="0.00"
+                  className="w-full px-3 py-2 text-base bg-white border border-slate-300 rounded-xl font-bold"
+                />
+              </div>
+
+              <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-xs">
+                <span className="text-slate-600">Foto Factura de Agua (Drive):</span>
+                <div className="flex items-center gap-2">
+                  {fotoFacturaAguaInput && (
+                    <a href={fotoFacturaAguaInput} target="_blank" rel="noreferrer" className="text-blue-600 underline">
+                      Ver
+                    </a>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setIsPhotoFacturaAguaOpen(true)}
+                    className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 rounded-xl font-semibold text-slate-700 flex items-center gap-1"
+                  >
+                    <Camera className="w-3.5 h-3.5" />
+                    <span>{fotoFacturaAguaInput ? 'Cambiar Foto' : 'Subir Factura'}</span>
+                  </button>
+                </div>
+              </div>
+
+              <div className="pt-2 flex justify-end gap-2 border-t border-slate-100">
+                <button type="button" onClick={() => setIsCargaAguaOpen(false)} className="px-4 py-2 text-xs text-slate-600">
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={savingCargaAgua}
+                  className="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold flex items-center gap-1"
+                >
+                  <Save className="w-4 h-4" />
+                  <span>{savingCargaAgua ? 'Guardando...' : 'Guardar Factura Pendiente'}</span>
+                </button>
+              </div>
+            </form>
+          </div>
+
+          <FotoUploaderModal
+            isOpen={isPhotoFacturaAguaOpen}
+            onClose={() => setIsPhotoFacturaAguaOpen(false)}
+            onPhotoSaved={(url) => setFotoFacturaAguaInput(url)}
+            currentUrl={fotoFacturaAguaInput}
+            titulo={`Factura de Agua ${MESES[guardiaMes]} ${guardiaAnio}`}
+            categoria="Facturas_Generales"
+            anio={guardiaAnio}
+            mes={guardiaMes}
+            customName={`Factura_Agua_${guardiaAnio}-${guardiaMes}.jpg`}
+          />
+        </div>
+      )}
+
+      {/* Modal: Registrar Pago de Factura de Agua */}
+      {isPagoAguaOpen && periodoFijo && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-sm overflow-y-auto">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-md my-8 overflow-hidden">
+            <div className="bg-slate-900 px-6 py-4 text-white flex items-center justify-between">
+              <div>
+                <h3 className="font-bold text-base">Registrar Pago de Factura de Agua</h3>
+                <p className="text-xs text-slate-400">
+                  {MESES[guardiaMes]} {guardiaAnio} • Total: {parseFloat(periodoFijo.factura_agua_bs || 0).toFixed(2)} Bs
+                </p>
+              </div>
+              <button onClick={() => setIsPagoAguaOpen(false)}>
+                <X className="w-5 h-5 text-slate-400 hover:text-white" />
+              </button>
+            </div>
+
+            <form onSubmit={handleConfirmarPagoAgua} className="p-6 space-y-4">
+              <div className="p-3 bg-blue-50 border border-blue-200 rounded-xl text-xs text-blue-900">
+                Se marcará la factura como <strong>Pagada</strong> y se creará el egreso automático en{' '}
+                <strong>Caja Servicios</strong> (categoría <em>Factura de Agua</em>) por{' '}
+                <strong>{parseFloat(periodoFijo.factura_agua_bs || 0).toFixed(2)} Bs</strong>.
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Fecha Real de Pago</label>
+                <input
+                  type="date"
+                  required
+                  value={fechaPagoAgua}
+                  onChange={(e) => setFechaPagoAgua(e.target.value)}
+                  className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-300 rounded-xl"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1.5">Método de Pago</label>
+                <div className="grid grid-cols-2 gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setMetodoPagoAgua('efectivo')}
+                    className={`py-2 px-3 rounded-xl border text-xs font-bold flex items-center justify-center gap-2 ${
+                      metodoPagoAgua === 'efectivo'
+                        ? 'bg-emerald-600 text-white border-emerald-600'
+                        : 'bg-slate-50 text-slate-700 border-slate-300'
+                    }`}
+                  >
+                    <Coins className="w-4 h-4" />
+                    <span>Efectivo</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setMetodoPagoAgua('qr')}
+                    className={`py-2 px-3 rounded-xl border text-xs font-bold flex items-center justify-center gap-2 ${
+                      metodoPagoAgua === 'qr'
+                        ? 'bg-blue-600 text-white border-blue-600'
+                        : 'bg-slate-50 text-slate-700 border-slate-300'
+                    }`}
+                  >
+                    <QrCode className="w-4 h-4" />
+                    <span>QR / Banco</span>
+                  </button>
+                </div>
+              </div>
+
+              <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-xs">
+                <span className="text-slate-600">Comprobante Pagado (Drive):</span>
+                <div className="flex items-center gap-2">
+                  {fotoPagoAgua && (
+                    <a href={fotoPagoAgua} target="_blank" rel="noreferrer" className="text-blue-600 underline">
+                      Ver
+                    </a>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setIsPhotoPagoAguaOpen(true)}
+                    className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 rounded-xl font-semibold text-slate-700 flex items-center gap-1"
+                  >
+                    <Camera className="w-3.5 h-3.5" />
+                    <span>{fotoPagoAgua ? 'Cambiar Foto' : 'Subir Comprobante'}</span>
+                  </button>
+                </div>
+              </div>
+
+              <div className="pt-2 flex justify-end gap-2 border-t border-slate-100">
+                <button type="button" onClick={() => setIsPagoAguaOpen(false)} className="px-4 py-2 text-xs text-slate-600">
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={savingPagoAgua}
+                  className="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold flex items-center gap-1"
+                >
+                  <CheckCircle2 className="w-4 h-4" />
+                  <span>{savingPagoAgua ? 'Registrando...' : 'Confirmar Pago de Agua'}</span>
+                </button>
+              </div>
+            </form>
+          </div>
+
+          <FotoUploaderModal
+            isOpen={isPhotoPagoAguaOpen}
+            onClose={() => setIsPhotoPagoAguaOpen(false)}
+            onPhotoSaved={(url) => setFotoPagoAgua(url)}
+            currentUrl={fotoPagoAgua}
+            titulo="Comprobante de Pago Factura de Agua"
+            categoria="Facturas_Generales"
+            anio={guardiaAnio}
+            mes={guardiaMes}
+            customName={`Pago_Factura_Agua_${guardiaAnio}-${guardiaMes}.jpg`}
           />
         </div>
       )}

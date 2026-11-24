@@ -200,4 +200,25 @@ ALTER TABLE cobros_externos
 -- Recargar caché de Supabase
 NOTIFY pgrst, 'reload schema';
 
+-- ============================================================
+-- FACTURA DE AGUA MENSUAL + CATEGORÍA LIBRE EN EGRESOS
+-- ============================================================
+
+-- 1. Control mensual de Factura de Agua en periodos_mensuales
+ALTER TABLE periodos_mensuales
+  ADD COLUMN IF NOT EXISTS factura_agua_bs NUMERIC(10,2) DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS estado_pago_agua TEXT DEFAULT 'pendiente_pago', -- 'pendiente_pago' | 'pagada'
+  ADD COLUMN IF NOT EXISTS fecha_pago_agua DATE,
+  ADD COLUMN IF NOT EXISTS metodo_pago_agua TEXT,
+  ADD COLUMN IF NOT EXISTS foto_factura_agua TEXT,
+  ADD COLUMN IF NOT EXISTS foto_comprobante_pago_agua TEXT,
+  ADD COLUMN IF NOT EXISTS egreso_agua_id UUID;
+
+-- 2. Asegurar que la categoría de egresos acepte escritura libre (sin restricciones cerradas)
+ALTER TABLE egresos
+  ALTER COLUMN categoria TYPE TEXT;
+
+-- Recargar caché de Supabase
+NOTIFY pgrst, 'reload schema';
+
 
