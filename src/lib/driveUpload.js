@@ -130,15 +130,33 @@ export async function uploadPhotoToDrive({ file, anio, mes, categoria = 'Tarifad
 
     const response = await fetch(scriptUrl, {
       method: 'POST',
+      redirect: 'follow',
       headers: {
-        'Content-Type': 'text/plain;charset=utf-8', // Requerido por CORS de Google Apps Script
+        'Content-Type': 'text/plain;charset=utf-8',
       },
       body: JSON.stringify(payload),
     })
 
-    const result = await response.json()
+    const rawText = await response.text()
+    let result
 
-    if (result.status === 'success' && result.url) {
+    try {
+      result = JSON.parse(rawText)
+    } catch (parseError) {
+      console.error(
+        '[DriveUpload] La respuesta no es JSON válido. Primeros 300 caracteres:\n',
+        rawText.slice(0, 300)
+      )
+      throw new Error(`Respuesta no válida de Google Apps Script: ${rawText.slice(0, 150)}`)
+    }
+
+    const isOk =
+      result.status === 'success' ||
+      result.success === true ||
+      result.ok === true ||
+      Boolean(result.url)
+
+    if (isOk && result.url) {
       return {
         url: result.url,
         compressedSizeKb: compression.compressedSizeKb,
@@ -146,7 +164,11 @@ export async function uploadPhotoToDrive({ file, anio, mes, categoria = 'Tarifad
         fileName,
       }
     } else {
-      throw new Error(result.message || 'Respuesta inválida de Google Apps Script')
+      console.error(
+        '[DriveUpload] Respuesta con error o sin URL. Primeros 300 caracteres:\n',
+        rawText.slice(0, 300)
+      )
+      throw new Error(result.message || result.error || 'Respuesta inválida de Google Apps Script (sin URL)')
     }
   } catch (error) {
     console.error('[DriveUpload] Error al enviar a Drive:', error)

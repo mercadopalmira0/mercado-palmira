@@ -51,6 +51,8 @@ function doPost(e) {
 
     return ContentService.createTextOutput(JSON.stringify({
       status: "success",
+      ok: true,
+      success: true,
       url: fileUrl,
       id: file.getId(),
       fileName: fileName
