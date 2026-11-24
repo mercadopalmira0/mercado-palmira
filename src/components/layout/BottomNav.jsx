@@ -1,7 +1,10 @@
 import React from 'react'
 import { NAVIGATION_ITEMS } from './navigation'
+import { useAuth } from '../../context/AuthContext'
 
-export default function BottomNav({ currentTab, onSelectTab, role }) {
+export default function BottomNav({ currentTab, onSelectTab }) {
+  const { isAdmin } = useAuth()
+
   return (
     <nav className="lg:hidden fixed bottom-0 left-0 right-0 z-40 bg-slate-900/95 backdrop-blur-md border-t border-slate-800 px-1 py-1 shadow-lg">
       <div className="flex items-center justify-around overflow-x-auto no-scrollbar">
@@ -10,7 +13,7 @@ export default function BottomNav({ currentTab, onSelectTab, role }) {
           const isActive = currentTab === item.id
           const isAdminOnly = item.id === 'bitacora'
 
-          if (isAdminOnly && role === 'directiva') {
+          if (isAdminOnly && !isAdmin) {
             return null
           }
 

@@ -1,7 +1,11 @@
 import React from 'react'
 import { NAVIGATION_ITEMS } from './navigation'
+import { useAuth } from '../../context/AuthContext'
 
-export default function Sidebar({ currentTab, onSelectTab, role }) {
+export default function Sidebar({ currentTab, onSelectTab }) {
+  const { user, isAdmin, isDirectiva } = useAuth()
+  const role = isAdmin ? 'admin' : isDirectiva ? 'directiva' : 'visitante'
+
   return (
     <aside className="hidden lg:flex flex-col w-64 bg-slate-900 border-r border-slate-800 p-4 text-slate-300 select-none">
       <div className="px-3 py-2 mb-2">
@@ -16,17 +20,17 @@ export default function Sidebar({ currentTab, onSelectTab, role }) {
           const isActive = currentTab === item.id
           const isAdminOnly = item.id === 'bitacora'
 
-          if (isAdminOnly && role === 'directiva') {
+          if (isAdminOnly && !isAdmin) {
             return (
               <div
                 key={item.id}
                 className="flex items-center px-3 py-2.5 rounded-xl text-xs text-slate-500 opacity-60 cursor-not-allowed border border-transparent"
-                title="Módulo restringido únicamente a rol Admin por políticas RLS"
+                title="Módulo de Bitácora restringido a Administrador por políticas RLS"
               >
                 <Icon className="w-4 h-4 mr-3 text-slate-500" />
                 <span className="truncate">{item.label}</span>
                 <span className="ml-auto text-[9px] bg-slate-800 px-1.5 py-0.5 rounded text-slate-400">
-                  Bloqueado
+                  Admin
                 </span>
               </div>
             )
@@ -55,8 +59,8 @@ export default function Sidebar({ currentTab, onSelectTab, role }) {
 
       {/* Footer Info */}
       <div className="pt-4 border-t border-slate-800 text-xs text-slate-500 space-y-1 px-2">
-        <p className="font-medium text-slate-400">Fase 1: Base & Esquema</p>
-        <p className="text-[11px] text-slate-500">Supabase RLS activo • Costo $0/mes</p>
+        <p className="font-medium text-slate-400">Fase 2: Padrón & Tarifas</p>
+        <p className="text-[11px] text-slate-500">Supabase RLS Activo • $0/mes</p>
       </div>
     </aside>
   )

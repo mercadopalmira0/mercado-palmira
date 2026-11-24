@@ -1,5 +1,7 @@
 import React, { useState } from 'react'
+import { AuthProvider, useAuth } from './context/AuthContext'
 import AppLayout from './components/layout/AppLayout'
+import AuthModal from './components/auth/AuthModal'
 import InicioView from './components/views/InicioView'
 import CobrarView from './components/views/CobrarView'
 import SociosView from './components/views/SociosView'
@@ -8,47 +10,64 @@ import EgresosView from './components/views/EgresosView'
 import RendicionView from './components/views/RendicionView'
 import BitacoraView from './components/views/BitacoraView'
 
-export default function App() {
+function AppContent() {
   const [currentTab, setCurrentTab] = useState('inicio')
-  const [role, setRole] = useState('admin') // 'admin' | 'directiva'
-
-  const handleToggleRole = () => {
-    setRole((prev) => (prev === 'admin' ? 'directiva' : 'admin'))
-    // If switching to directiva while in bitacora, redirect to inicio
-    if (role === 'admin' && currentTab === 'bitacora') {
-      setCurrentTab('inicio')
-    }
-  }
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false)
+  const { user, isAdmin } = useAuth()
 
   const renderActiveView = () => {
     switch (currentTab) {
       case 'inicio':
-        return <InicioView role={role} />
+        return (
+          <InicioView
+            onOpenAuth={() => setIsAuthModalOpen(true)}
+            onNavigateTab={setCurrentTab}
+          />
+        )
       case 'cobrar':
-        return <CobrarView role={role} />
+        return <CobrarView />
       case 'socios':
-        return <SociosView role={role} />
+        return <SociosView onOpenAuth={() => setIsAuthModalOpen(true)} />
       case 'afiliaciones':
-        return <AfiliacionesView role={role} />
+        return <AfiliacionesView />
       case 'egresos':
-        return <EgresosView role={role} />
+        return <EgresosView />
       case 'rendicion':
-        return <RendicionView role={role} />
+        return <RendicionView />
       case 'bitacora':
-        return <BitacoraView role={role} />
+        return <BitacoraView role={isAdmin ? 'admin' : 'directiva'} />
       default:
-        return <InicioView role={role} />
+        return (
+          <InicioView
+            onOpenAuth={() => setIsAuthModalOpen(true)}
+            onNavigateTab={setCurrentTab}
+          />
+        )
     }
   }
 
   return (
-    <AppLayout
-      currentTab={currentTab}
-      onSelectTab={setCurrentTab}
-      role={role}
-      onToggleRole={handleToggleRole}
-    >
-      {renderActiveView()}
-    </AppLayout>
+    <>
+      <AppLayout
+        currentTab={currentTab}
+        onSelectTab={setCurrentTab}
+        onOpenAuth={() => setIsAuthModalOpen(true)}
+      >
+        {renderActiveView()}
+      </AppLayout>
+
+      <AuthModal
+        isOpen={isAuthModalOpen}
+        onClose={() => setIsAuthModalOpen(false)}
+      />
+    </>
+  )
+}
+
+export default function App() {
+  return (
+    <AuthProvider>
+      <AppContent />
+    </AuthProvider>
   )
 }
