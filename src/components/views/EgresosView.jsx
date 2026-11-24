@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
-import { registrarAuditoria } from '../../lib/auditoria'
+import { registrarAuditoria, registrarEdicionAuditoria, registrarEliminacionAuditoria } from '../../lib/auditoria'
 import { MESES, getLocalDateStr } from '../../lib/formatters'
 import FotoUploaderModal from '../modals/FotoUploaderModal'
+import ConfirmMotivoModal from '../modals/ConfirmMotivoModal'
 import {
   ArrowDownCircle,
   Coins,
@@ -16,7 +17,9 @@ import {
   PlusCircle,
   Search,
   Shield,
-  Save
+  Save,
+  Edit2,
+  Trash2
 } from 'lucide-react'
 
 const CATEGORIAS_SERVICIOS = [
@@ -48,7 +51,7 @@ export default function EgresosView() {
   const { user, isAdmin } = useAuth()
   const today = new Date()
 
-  const [activeTab, setActiveTab] = useState('egresos') // 'egresos' | 'guardia'
+  const [activeTab, setActiveTab] = useState('egresos')
   const [egresos, setEgresos] = useState([])
   const [loading, setLoading] = useState(true)
   const [filterCaja, setFilterCaja] = useState('todos')
@@ -56,8 +59,9 @@ export default function EgresosView() {
   const [searchTerm, setSearchTerm] = useState('')
   const [statusMessage, setStatusMessage] = useState(null)
 
-  // Modales Egresos Generales
+  // Modal Egreso General (Crear / Editar)
   const [isNewModalOpen, setIsNewModalOpen] = useState(false)
+  const [editingEgreso, setEditingEgreso] = useState(null)
   const [isPhotoModalOpen, setIsPhotoModalOpen] = useState(false)
   const [anulandoEgresoId, setAnulandoEgresoId] = useState(null)
   const [motivoAnulacion, setMotivoAnulacion] = useState('')
@@ -76,12 +80,14 @@ export default function EgresosView() {
   const [guardiaAnio, setGuardiaAnio] = useState(today.getFullYear())
   const [tarifaId, setTarifaId] = useState(null)
   const [sueldoMensual, setSueldoMensual] = useState(0)
+  const [sueldoOriginal, setSueldoOriginal] = useState(0)
   const [savingSueldo, setSavingSueldo] = useState(false)
   const [pagosGuardia, setPagosGuardia] = useState([])
   const [loadingGuardia, setLoadingGuardia] = useState(false)
 
-  // Modal Adelanto / Pago Guardia
+  // Modal Adelanto / Pago Guardia (Crear / Editar)
   const [isGuardiaModalOpen, setIsGuardiaModalOpen] = useState(false)
+  const [editingGuardia, setEditingGuardia] = useState(null)
   const [gTipo, setGTipo] = useState('adelanto_quincena')
   const [gMonto, setGMonto] = useState('')
   const [gFecha, setGFecha] = useState(getLocalDateStr())
@@ -91,9 +97,17 @@ export default function EgresosView() {
   const [isGuardiaPhotoOpen, setIsGuardiaPhotoOpen] = useState(false)
   const [savingGuardia, setSavingGuardia] = useState(false)
 
-  // Anular pago guardia
   const [anulandoGuardiaId, setAnulandoGuardiaId] = useState(null)
   const [motivoAnulGuardia, setMotivoAnulGuardia] = useState('')
+
+  // Confirmación auditada
+  const [confirmState, setConfirmState] = useState({
+    open: false,
+    tipo: 'edicion',
+    entity: null, // 'egreso' | 'guardia' | 'sueldo'
+    target: null,
+    advertencia: '',
+  })
 
   const fetchEgresos = async () => {
     setLoading(true)
@@ -131,7 +145,9 @@ export default function EgresosView() {
 
       if (tData) {
         setTarifaId(tData.id)
-        setSueldoMensual(parseFloat(tData.sueldo_guardia_mensual) || 0)
+        const s = parseFloat(tData.sueldo_guardia_mensual) || 0
+        setSueldoMensual(s)
+        setSueldoOriginal(s)
       }
       if (pgErr) throw pgErr
       setPagosGuardia(pgData || [])
@@ -153,7 +169,32 @@ export default function EgresosView() {
 
   const handleCajaChange = (newCaja) => {
     setCaja(newCaja)
-    setCategoria(newCaja === 'servicios' ? CATEGORIAS_SERVICIOS[0] : CATEGORIAS_AFILIACIONES[0])
+    const cats = newCaja === 'servicios' ? CATEGORIAS_SERVICIOS : CATEGORIAS_AFILIACIONES
+    if (!cats.includes(categoria)) setCategoria(cats[0])
+  }
+
+  const openNewEgresoModal = () => {
+    setEditingEgreso(null)
+    setCaja('servicios')
+    setCategoria(CATEGORIAS_SERVICIOS[0])
+    setDescripcion('')
+    setMonto('')
+    setMetodoPago('efectivo')
+    setFecha(getLocalDateStr())
+    setReciboDriveUrl('')
+    setIsNewModalOpen(true)
+  }
+
+  const openEditEgresoModal = (eg) => {
+    setEditingEgreso(eg)
+    setCaja(eg.caja || 'servicios')
+    setCategoria(eg.categoria || CATEGORIAS_SERVICIOS[0])
+    setDescripcion(eg.descripcion || '')
+    setMonto(String(eg.monto ?? ''))
+    setMetodoPago(eg.metodo_pago || 'efectivo')
+    setFecha(eg.fecha || getLocalDateStr())
+    setReciboDriveUrl(eg.recibo_drive_url || '')
+    setIsNewModalOpen(true)
   }
 
   const handleSaveEgreso = async (e) => {
@@ -168,20 +209,29 @@ export default function EgresosView() {
       return
     }
 
+    if (editingEgreso) {
+      setConfirmState({ open: true, tipo: 'edicion', entity: 'egreso', target: editingEgreso, advertencia: '' })
+      return
+    }
+
     setSaving(true)
     try {
-      const { error } = await supabase.from('egresos').insert([
-        {
-          caja,
-          categoria,
-          descripcion: descripcion.trim(),
-          monto: montoNum,
-          metodo_pago: metodoPago,
-          fecha,
-          recibo_drive_url: reciboDriveUrl || null,
-          estado: 'activo',
-        },
-      ])
+      const { data, error } = await supabase
+        .from('egresos')
+        .insert([
+          {
+            caja,
+            categoria,
+            descripcion: descripcion.trim(),
+            monto: montoNum,
+            metodo_pago: metodoPago,
+            fecha,
+            recibo_drive_url: reciboDriveUrl || null,
+            estado: 'activo',
+          },
+        ])
+        .select()
+        .single()
 
       if (error) throw error
 
@@ -190,6 +240,8 @@ export default function EgresosView() {
         accion: 'REGISTRO_EGRESO',
         detalleJson: {
           descripcion: `Egreso ${montoNum.toFixed(2)} Bs en Caja ${caja} (${categoria}): ${descripcion.trim()}`,
+          tabla: 'egresos',
+          registro_id: data?.id,
           caja,
           categoria,
           monto: montoNum,
@@ -203,9 +255,6 @@ export default function EgresosView() {
         text: `¡Egreso de ${montoNum.toFixed(2)} Bs registrado en Caja ${caja === 'servicios' ? 'Servicios' : 'Afiliaciones'}!`,
       })
       setIsNewModalOpen(false)
-      setDescripcion('')
-      setMonto('')
-      setReciboDriveUrl('')
       await fetchEgresos()
     } catch (err) {
       console.error(err)
@@ -217,7 +266,7 @@ export default function EgresosView() {
 
   const handleAnularEgreso = async (egresoId) => {
     if (!motivoAnulacion.trim()) {
-      setStatusMessage({ type: 'error', text: 'El motivo de anulación es obligatorio (regla de cero borrados).' })
+      setStatusMessage({ type: 'error', text: 'El motivo de anulación es obligatorio.' })
       return
     }
 
@@ -237,6 +286,8 @@ export default function EgresosView() {
         accion: 'ANULACION_EGRESO',
         detalleJson: {
           descripcion: `Anulación de egreso ${egresoId}`,
+          tabla: 'egresos',
+          registro_id: egresoId,
           motivo: motivoAnulacion.trim(),
         },
       })
@@ -251,32 +302,15 @@ export default function EgresosView() {
     }
   }
 
-  const handleSaveSueldoGuardia = async () => {
-    if (!tarifaId || !isAdmin) return
-    setSavingSueldo(true)
-    try {
-      const nuevoSueldo = parseFloat(sueldoMensual) || 0
-      const { error } = await supabase
-        .from('configuracion_tarifas')
-        .update({ sueldo_guardia_mensual: nuevoSueldo })
-        .eq('id', tarifaId)
-      if (error) throw error
-
-      await registrarAuditoria({
-        usuarioId: user?.id,
-        accion: 'ACTUALIZACION_SUELDO_GUARDIA',
-        detalleJson: {
-          descripcion: `Sueldo mensual del guardia actualizado a ${nuevoSueldo.toFixed(2)} Bs`,
-          sueldo_guardia_mensual: nuevoSueldo,
-        },
-      })
-
-      setStatusMessage({ type: 'success', text: `Sueldo mensual del guardia guardado: ${nuevoSueldo.toFixed(2)} Bs.` })
-    } catch (err) {
-      setStatusMessage({ type: 'error', text: 'Error al guardar sueldo: ' + err.message })
-    } finally {
-      setSavingSueldo(false)
-    }
+  const openEditGuardiaModal = (pg) => {
+    setEditingGuardia(pg)
+    setGTipo(pg.tipo || 'adelanto_quincena')
+    setGMonto(String(pg.monto ?? ''))
+    setGFecha(pg.fecha_pago || getLocalDateStr())
+    setGMetodo(pg.metodo_pago || 'efectivo')
+    setGObs(pg.observaciones || '')
+    setGFotoUrl(pg.foto_vale_url || '')
+    setIsGuardiaModalOpen(true)
   }
 
   const handleSavePagoGuardia = async (e) => {
@@ -287,12 +321,22 @@ export default function EgresosView() {
       return
     }
 
+    if (editingGuardia) {
+      setConfirmState({
+        open: true,
+        tipo: 'edicion',
+        entity: 'guardia',
+        target: editingGuardia,
+        advertencia: editingGuardia.egreso_id ? 'También se actualizará el egreso vinculado en Caja Servicios.' : '',
+      })
+      return
+    }
+
     setSavingGuardia(true)
     try {
       const tipoLabel = TIPOS_GUARDIA.find((t) => t.value === gTipo)?.label || gTipo
       const descEgreso = `${tipoLabel} - ${MESES[guardiaMes]} ${guardiaAnio}${gObs.trim() ? ` (${gObs.trim()})` : ''}`
 
-      // 1. Crear egreso automático en Caja Servicios en la fecha real
       const { data: egresoCreado, error: egErr } = await supabase
         .from('egresos')
         .insert([
@@ -312,7 +356,6 @@ export default function EgresosView() {
 
       if (egErr) throw egErr
 
-      // 2. Registrar en pagos_guardia vinculado al egreso_id
       const { error: pgErr } = await supabase.from('pagos_guardia').insert([
         {
           anio: guardiaAnio,
@@ -335,6 +378,7 @@ export default function EgresosView() {
         accion: 'PAGO_SUELDO_GUARDIA',
         detalleJson: {
           descripcion: `${descEgreso} por ${montoNum.toFixed(2)} Bs (${gMetodo})`,
+          tabla: 'pagos_guardia',
           egreso_id: egresoCreado.id,
           monto: montoNum,
           tipo: gTipo,
@@ -347,9 +391,6 @@ export default function EgresosView() {
         text: `¡${tipoLabel} de ${montoNum.toFixed(2)} Bs registrado y descontado de Caja Servicios!`,
       })
       setIsGuardiaModalOpen(false)
-      setGMonto('')
-      setGObs('')
-      setGFotoUrl('')
       await Promise.all([fetchGuardiaData(), fetchEgresos()])
     } catch (err) {
       console.error(err)
@@ -375,7 +416,6 @@ export default function EgresosView() {
         .eq('id', pago.id)
       if (pgErr) throw pgErr
 
-      // Anular también su egreso vinculado en Caja Servicios
       if (pago.egreso_id) {
         const { error: egErr } = await supabase
           .from('egresos')
@@ -392,7 +432,8 @@ export default function EgresosView() {
         accion: 'ANULACION_PAGO_GUARDIA',
         detalleJson: {
           descripcion: `Anulación de pago al guardia (${pago.monto} Bs, ${MESES[pago.mes]} ${pago.anio})`,
-          pago_id: pago.id,
+          tabla: 'pagos_guardia',
+          registro_id: pago.id,
           egreso_id: pago.egreso_id,
           motivo: motivoAnulGuardia.trim(),
         },
@@ -411,12 +452,174 @@ export default function EgresosView() {
     }
   }
 
+  const handleConfirmAudit = async (motivo) => {
+    const { tipo, entity, target } = confirmState
+    if (!target && entity !== 'sueldo') return
+
+    setSaving(true)
+    setSavingGuardia(true)
+    setSavingSueldo(true)
+
+    try {
+      if (entity === 'egreso' && tipo === 'edicion') {
+        const montoNum = parseFloat(monto)
+        const datosNuevos = {
+          caja,
+          categoria,
+          descripcion: descripcion.trim(),
+          monto: montoNum,
+          metodo_pago: metodoPago,
+          fecha,
+          recibo_drive_url: reciboDriveUrl || null,
+        }
+
+        await registrarEdicionAuditoria({
+          usuarioId: user?.id,
+          modulo: 'Egresos Generales',
+          tabla: 'egresos',
+          registroId: target.id,
+          motivo,
+          resumen: `Edición de egreso "${target.descripcion}"`,
+          datosAnteriores: {
+            caja: target.caja,
+            categoria: target.categoria,
+            descripcion: target.descripcion,
+            monto: target.monto,
+            metodo_pago: target.metodo_pago,
+            fecha: target.fecha,
+            recibo_drive_url: target.recibo_drive_url,
+          },
+          datosNuevos,
+        })
+
+        const { error } = await supabase.from('egresos').update(datosNuevos).eq('id', target.id)
+        if (error) throw error
+
+        setIsNewModalOpen(false)
+        setEditingEgreso(null)
+        setStatusMessage({ type: 'success', text: 'Egreso editado y auditado en bitácora.' })
+      } else if (entity === 'egreso' && tipo === 'eliminacion') {
+        await registrarEliminacionAuditoria({
+          usuarioId: user?.id,
+          modulo: 'Egresos Generales',
+          tabla: 'egresos',
+          registroId: target.id,
+          motivo,
+          resumen: `Eliminación de egreso "${target.descripcion}" (${target.monto} Bs)`,
+          datosAnteriores: target,
+        })
+
+        const { error } = await supabase.from('egresos').delete().eq('id', target.id)
+        if (error) throw error
+
+        setStatusMessage({ type: 'success', text: 'Egreso eliminado y auditado en bitácora.' })
+      } else if (entity === 'guardia' && tipo === 'edicion') {
+        const montoNum = parseFloat(gMonto)
+        const tipoLabel = TIPOS_GUARDIA.find((t) => t.value === gTipo)?.label || gTipo
+        const descEgreso = `${tipoLabel} - ${MESES[guardiaMes]} ${guardiaAnio}${gObs.trim() ? ` (${gObs.trim()})` : ''}`
+        const datosNuevos = {
+          tipo: gTipo,
+          monto: montoNum,
+          metodo_pago: gMetodo,
+          fecha_pago: gFecha,
+          foto_vale_url: gFotoUrl || null,
+          observaciones: gObs.trim() || null,
+        }
+
+        await registrarEdicionAuditoria({
+          usuarioId: user?.id,
+          modulo: 'Sueldo Guardia',
+          tabla: 'pagos_guardia',
+          registroId: target.id,
+          motivo,
+          resumen: `Edición de pago guardia (${MESES[guardiaMes]} ${guardiaAnio})`,
+          datosAnteriores: {
+            tipo: target.tipo,
+            monto: target.monto,
+            metodo_pago: target.metodo_pago,
+            fecha_pago: target.fecha_pago,
+            foto_vale_url: target.foto_vale_url,
+            observaciones: target.observaciones,
+          },
+          datosNuevos,
+        })
+
+        const { error: pgErr } = await supabase.from('pagos_guardia').update(datosNuevos).eq('id', target.id)
+        if (pgErr) throw pgErr
+
+        if (target.egreso_id) {
+          await supabase
+            .from('egresos')
+            .update({
+              descripcion: descEgreso,
+              monto: montoNum,
+              metodo_pago: gMetodo,
+              fecha: gFecha,
+              recibo_drive_url: gFotoUrl || null,
+            })
+            .eq('id', target.egreso_id)
+        }
+
+        setIsGuardiaModalOpen(false)
+        setEditingGuardia(null)
+        setStatusMessage({ type: 'success', text: 'Pago del guardia y egreso vinculado editados con auditoría.' })
+      } else if (entity === 'guardia' && tipo === 'eliminacion') {
+        await registrarEliminacionAuditoria({
+          usuarioId: user?.id,
+          modulo: 'Sueldo Guardia',
+          tabla: 'pagos_guardia',
+          registroId: target.id,
+          motivo,
+          resumen: `Eliminación de pago guardia (${target.monto} Bs, ${MESES[target.mes]} ${target.anio})`,
+          datosAnteriores: target,
+        })
+
+        const { error: pgErr } = await supabase.from('pagos_guardia').delete().eq('id', target.id)
+        if (pgErr) throw pgErr
+
+        if (target.egreso_id) {
+          await supabase.from('egresos').delete().eq('id', target.egreso_id)
+        }
+
+        setStatusMessage({ type: 'success', text: 'Pago del guardia y su egreso vinculado eliminados con auditoría.' })
+      } else if (entity === 'sueldo' && tipo === 'edicion') {
+        const nuevoSueldo = parseFloat(sueldoMensual) || 0
+        await registrarEdicionAuditoria({
+          usuarioId: user?.id,
+          modulo: 'Sueldo Mensual Guardia',
+          tabla: 'configuracion_tarifas',
+          registroId: tarifaId,
+          motivo,
+          resumen: `Cambio de sueldo mensual del guardia (${sueldoOriginal} Bs ➔ ${nuevoSueldo} Bs)`,
+          datosAnteriores: { sueldo_guardia_mensual: sueldoOriginal },
+          datosNuevos: { sueldo_guardia_mensual: nuevoSueldo },
+        })
+
+        const { error } = await supabase
+          .from('configuracion_tarifas')
+          .update({ sueldo_guardia_mensual: nuevoSueldo })
+          .eq('id', tarifaId)
+        if (error) throw error
+
+        setSueldoOriginal(nuevoSueldo)
+        setStatusMessage({ type: 'success', text: `Sueldo mensual guardado (${nuevoSueldo.toFixed(2)} Bs) con auditoría.` })
+      }
+
+      setConfirmState({ open: false, tipo: 'edicion', entity: null, target: null, advertencia: '' })
+      await Promise.all([fetchEgresos(), fetchGuardiaData()])
+    } catch (err) {
+      setStatusMessage({ type: 'error', text: err.message })
+      setConfirmState({ open: false, tipo: 'edicion', entity: null, target: null, advertencia: '' })
+    } finally {
+      setSaving(false)
+      setSavingGuardia(false)
+      setSavingSueldo(false)
+    }
+  }
+
   const filteredEgresos = egresos.filter((eg) => {
     const term = searchTerm.toLowerCase()
-    const matchesSearch =
-      !term ||
-      eg.descripcion?.toLowerCase().includes(term) ||
-      eg.categoria?.toLowerCase().includes(term)
+    const matchesSearch = !term || eg.descripcion?.toLowerCase().includes(term) || eg.categoria?.toLowerCase().includes(term)
     if (!matchesSearch) return false
     if (filterCaja !== 'todos' && eg.caja !== filterCaja) return false
     if (filterMetodo !== 'todos' && eg.metodo_pago !== filterMetodo) return false
@@ -433,7 +636,6 @@ export default function EgresosView() {
 
   const totalGeneralEgresos = totalServicios + totalAfiliaciones
 
-  // Cálculos sueldo guardia del mes seleccionado
   const totalAdelantosGuardia = pagosGuardia
     .filter((p) => !p.anulado)
     .reduce((s, p) => s + (parseFloat(p.monto) || 0), 0)
@@ -441,7 +643,6 @@ export default function EgresosView() {
 
   return (
     <div className="space-y-6">
-      {/* Header Banner */}
       <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <div className="flex items-center space-x-2">
@@ -451,7 +652,7 @@ export default function EgresosView() {
             </span>
           </div>
           <p className="text-xs text-slate-500 mt-1">
-            Registro estricto de facturas, sueldo/adelantos del guardia y mantenimiento con foto a Google Drive.
+            Registro, edición y eliminación auditada de facturas, sueldos y mantenimiento.
           </p>
         </div>
 
@@ -467,17 +668,20 @@ export default function EgresosView() {
             <RefreshCw className={`w-4 h-4 ${loading || loadingGuardia ? 'animate-spin text-amber-600' : ''}`} />
           </button>
           {activeTab === 'egresos' ? (
-            <button
-              onClick={() => setIsNewModalOpen(true)}
-              className="px-4 py-2.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold shadow-md shadow-amber-900/20 transition-all flex items-center gap-1.5"
-            >
-              <PlusCircle className="w-4 h-4" />
-              <span>+ Registrar Egreso</span>
-            </button>
+            isAdmin && (
+              <button
+                onClick={openNewEgresoModal}
+                className="px-4 py-2.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold shadow-md transition-all flex items-center gap-1.5"
+              >
+                <PlusCircle className="w-4 h-4" />
+                <span>+ Registrar Egreso</span>
+              </button>
+            )
           ) : (
             isAdmin && (
               <button
                 onClick={() => {
+                  setEditingGuardia(null)
                   setGTipo('adelanto_quincena')
                   setGMonto('')
                   setGFecha(getLocalDateStr())
@@ -496,7 +700,6 @@ export default function EgresosView() {
         </div>
       </div>
 
-      {/* Tabs */}
       <div className="flex items-center gap-2 bg-white p-1.5 rounded-2xl border border-slate-200 shadow-sm w-fit">
         <button
           type="button"
@@ -535,29 +738,19 @@ export default function EgresosView() {
       )}
 
       {activeTab === 'guardia' ? (
-        /* PESTAÑA: SUELDO Y ADELANTOS DEL GUARDIA */
         <div className="space-y-5">
-          {/* Selector Mes/Año y Sueldo Mensual Editable */}
           <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div className="flex items-center gap-2 text-xs">
               <span className="font-semibold text-slate-600">Mes de Control:</span>
               <div className="flex items-center bg-slate-50 border border-slate-200 rounded-xl p-1">
-                <select
-                  value={guardiaMes}
-                  onChange={(e) => setGuardiaMes(parseInt(e.target.value, 10))}
-                  className="bg-transparent font-bold text-slate-800 py-1 px-2 focus:outline-none"
-                >
+                <select value={guardiaMes} onChange={(e) => setGuardiaMes(parseInt(e.target.value, 10))} className="bg-transparent font-bold text-slate-800 py-1 px-2 focus:outline-none">
                   {MESES.slice(1).map((m, i) => (
                     <option key={i + 1} value={i + 1}>
                       {m}
                     </option>
                   ))}
                 </select>
-                <select
-                  value={guardiaAnio}
-                  onChange={(e) => setGuardiaAnio(parseInt(e.target.value, 10))}
-                  className="bg-transparent font-bold text-slate-800 py-1 px-2 border-l border-slate-200 focus:outline-none"
-                >
+                <select value={guardiaAnio} onChange={(e) => setGuardiaAnio(parseInt(e.target.value, 10))} className="bg-transparent font-bold text-slate-800 py-1 px-2 border-l border-slate-200 focus:outline-none">
                   {[2024, 2025, 2026, 2027, 2028].map((y) => (
                     <option key={y} value={y}>
                       {y}
@@ -581,26 +774,30 @@ export default function EgresosView() {
               {isAdmin && (
                 <button
                   type="button"
-                  onClick={handleSaveSueldoGuardia}
+                  onClick={() =>
+                    setConfirmState({
+                      open: true,
+                      tipo: 'edicion',
+                      entity: 'sueldo',
+                      target: { id: tarifaId },
+                      advertencia: '',
+                    })
+                  }
                   disabled={savingSueldo}
                   className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl font-bold flex items-center gap-1"
                 >
                   <Save className="w-3.5 h-3.5" />
-                  <span>{savingSueldo ? '...' : 'Guardar'}</span>
+                  <span>Guardar</span>
                 </button>
               )}
             </div>
           </div>
 
-          {/* 3 Tarjetas Claras del Mes */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-sm">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 block">
-                Sueldo Mensual
-              </span>
+              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 block">Sueldo Mensual</span>
               <p className="text-2xl font-extrabold text-slate-900 mt-1">
-                {(parseFloat(sueldoMensual) || 0).toFixed(2)}{' '}
-                <span className="text-xs font-normal text-slate-500">Bs</span>
+                {(parseFloat(sueldoMensual) || 0).toFixed(2)} <span className="text-xs font-normal text-slate-500">Bs</span>
               </p>
               <span className="text-[11px] text-slate-400">
                 {MESES[guardiaMes]} {guardiaAnio}
@@ -608,51 +805,27 @@ export default function EgresosView() {
             </div>
 
             <div className="bg-white rounded-2xl p-4 border border-emerald-200 shadow-sm">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-700 block">
-                Total Adelantos Entregados
-              </span>
+              <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-700 block">Total Adelantos Entregados</span>
               <p className="text-2xl font-extrabold text-emerald-700 mt-1">
-                {totalAdelantosGuardia.toFixed(2)}{' '}
-                <span className="text-xs font-normal text-slate-500">Bs</span>
+                {totalAdelantosGuardia.toFixed(2)} <span className="text-xs font-normal text-slate-500">Bs</span>
               </p>
-              <span className="text-[11px] text-slate-400">Cargado automáticamente en Egresos Servicios</span>
+              <span className="text-[11px] text-slate-400">Cargado en Egresos Servicios</span>
             </div>
 
             <div className="bg-white rounded-2xl p-4 border border-amber-200 shadow-sm">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-amber-700 block">
-                Saldo Pendiente por Pagar
-              </span>
+              <span className="text-[10px] font-bold uppercase tracking-wider text-amber-700 block">Saldo Pendiente por Pagar</span>
               <p className="text-2xl font-extrabold text-amber-700 mt-1">
-                {saldoPendienteGuardia.toFixed(2)}{' '}
-                <span className="text-xs font-normal text-slate-500">Bs</span>
+                {saldoPendienteGuardia.toFixed(2)} <span className="text-xs font-normal text-slate-500">Bs</span>
               </p>
               <span className="text-[11px] text-slate-400">Restante del sueldo del mes</span>
             </div>
           </div>
 
-          {/* Historial de Pagos del Guardia del Mes */}
           <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm">
             <div className="px-5 py-3.5 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
               <span className="text-xs font-bold uppercase tracking-wider text-slate-700">
                 Movimientos del Guardia — {MESES[guardiaMes]} {guardiaAnio} ({pagosGuardia.length})
               </span>
-              {isAdmin && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setGTipo(saldoPendienteGuardia > 0 && totalAdelantosGuardia > 0 ? 'saldo_fin_mes' : 'adelanto_quincena')
-                    setGMonto(saldoPendienteGuardia > 0 && totalAdelantosGuardia > 0 ? saldoPendienteGuardia.toFixed(2) : '')
-                    setGFecha(getLocalDateStr())
-                    setGMetodo('efectivo')
-                    setGObs('')
-                    setGFotoUrl('')
-                    setIsGuardiaModalOpen(true)
-                  }}
-                  className="text-xs font-bold text-emerald-700 hover:underline"
-                >
-                  + Registrar Adelanto / Pago
-                </button>
-              )}
             </div>
 
             {pagosGuardia.length === 0 ? (
@@ -678,43 +851,56 @@ export default function EgresosView() {
                           </span>
                         </div>
 
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-1.5">
                           {p.foto_vale_url && (
-                            <a
-                              href={p.foto_vale_url}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="p-1.5 bg-blue-50 text-blue-600 rounded-lg inline-flex items-center gap-1 text-[11px] font-semibold"
-                            >
+                            <a href={p.foto_vale_url} target="_blank" rel="noreferrer" className="p-1.5 bg-blue-50 text-blue-600 rounded-lg inline-flex items-center gap-1 text-[11px] font-semibold">
                               <ExternalLink className="w-3.5 h-3.5" />
                               <span>Ver Vale</span>
                             </a>
                           )}
                           {p.anulado ? (
-                            <span className="px-2 py-0.5 bg-red-100 text-red-700 rounded text-[10px] font-bold">
-                              Anulado
-                            </span>
+                            <span className="px-2 py-0.5 bg-red-100 text-red-700 rounded text-[10px] font-bold">Anulado</span>
                           ) : (
                             isAdmin && (
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setAnulandoGuardiaId(p.id)
-                                  setMotivoAnulGuardia('')
-                                }}
-                                className="text-red-600 hover:bg-red-50 px-2 py-1 rounded font-semibold"
-                              >
-                                Anular
-                              </button>
+                              <>
+                                <button type="button" onClick={() => openEditGuardiaModal(p)} title="Editar pago" className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg">
+                                  <Edit2 className="w-3.5 h-3.5" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setAnulandoGuardiaId(p.id)
+                                    setMotivoAnulGuardia('')
+                                  }}
+                                  className="text-orange-600 hover:bg-orange-50 px-2 py-1 rounded font-semibold"
+                                >
+                                  Anular
+                                </button>
+                              </>
                             )
+                          )}
+                          {isAdmin && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setConfirmState({
+                                  open: true,
+                                  tipo: 'eliminacion',
+                                  entity: 'guardia',
+                                  target: p,
+                                  advertencia: p.egreso_id ? 'Se eliminará también su egreso vinculado en Caja Servicios.' : '',
+                                })
+                              }
+                              title="Eliminar pago guardia"
+                              className="p-1.5 text-red-600 hover:bg-red-50 rounded-lg"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
                           )}
                         </div>
                       </div>
 
-                      {p.observaciones && (
-                        <p className="text-slate-600">{p.observaciones}</p>
-                      )}
-
+                      {p.observaciones && <p className="text-slate-600">{p.observaciones}</p>}
                       {p.anulado && p.motivo_anulacion && (
                         <p className="text-[11px] text-red-700 bg-red-50 p-2 rounded">
                           <strong>Motivo anulación:</strong> {p.motivo_anulacion}
@@ -737,11 +923,7 @@ export default function EgresosView() {
                             <button type="button" onClick={() => setAnulandoGuardiaId(null)} className="text-slate-600">
                               Cancelar
                             </button>
-                            <button
-                              type="button"
-                              onClick={() => handleAnularPagoGuardia(p)}
-                              className="px-3 py-1 bg-red-600 text-white rounded-lg font-bold"
-                            >
+                            <button type="button" onClick={() => handleAnularPagoGuardia(p)} className="px-3 py-1 bg-red-600 text-white rounded-lg font-bold">
                               Confirmar Anulación
                             </button>
                           </div>
@@ -755,13 +937,10 @@ export default function EgresosView() {
           </div>
         </div>
       ) : (
-        /* PESTAÑA: EGRESOS GENERALES */
         <>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-sm">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-700 block">
-                Egresos Caja Servicios
-              </span>
+              <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-700 block">Egresos Caja Servicios</span>
               <p className="text-xl font-bold text-slate-900 mt-1">
                 {totalServicios.toFixed(2)} <span className="text-xs font-normal text-slate-500">Bs</span>
               </p>
@@ -769,9 +948,7 @@ export default function EgresosView() {
             </div>
 
             <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-sm">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-blue-700 block">
-                Egresos Caja Afiliaciones
-              </span>
+              <span className="text-[10px] font-bold uppercase tracking-wider text-blue-700 block">Egresos Caja Afiliaciones</span>
               <p className="text-xl font-bold text-slate-900 mt-1">
                 {totalAfiliaciones.toFixed(2)} <span className="text-xs font-normal text-slate-500">Bs</span>
               </p>
@@ -779,9 +956,7 @@ export default function EgresosView() {
             </div>
 
             <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-sm">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-red-600 block">
-                Total Egresos General
-              </span>
+              <span className="text-[10px] font-bold uppercase tracking-wider text-red-600 block">Total Egresos General</span>
               <p className="text-xl font-bold text-red-600 mt-1">
                 {totalGeneralEgresos.toFixed(2)} <span className="text-xs font-normal text-slate-500">Bs</span>
               </p>
@@ -803,43 +978,25 @@ export default function EgresosView() {
 
             <div className="flex flex-wrap items-center gap-2 text-xs font-medium">
               <div className="flex items-center space-x-1 bg-slate-100 p-1 rounded-xl">
-                <button
-                  onClick={() => setFilterCaja('todos')}
-                  className={`px-2.5 py-1 rounded-lg ${filterCaja === 'todos' ? 'bg-white font-bold shadow-sm' : 'text-slate-600'}`}
-                >
+                <button onClick={() => setFilterCaja('todos')} className={`px-2.5 py-1 rounded-lg ${filterCaja === 'todos' ? 'bg-white font-bold shadow-sm' : 'text-slate-600'}`}>
                   Todas
                 </button>
-                <button
-                  onClick={() => setFilterCaja('servicios')}
-                  className={`px-2.5 py-1 rounded-lg ${filterCaja === 'servicios' ? 'bg-emerald-600 text-white font-bold' : 'text-slate-600'}`}
-                >
+                <button onClick={() => setFilterCaja('servicios')} className={`px-2.5 py-1 rounded-lg ${filterCaja === 'servicios' ? 'bg-emerald-600 text-white font-bold' : 'text-slate-600'}`}>
                   Servicios
                 </button>
-                <button
-                  onClick={() => setFilterCaja('afiliaciones')}
-                  className={`px-2.5 py-1 rounded-lg ${filterCaja === 'afiliaciones' ? 'bg-blue-600 text-white font-bold' : 'text-slate-600'}`}
-                >
+                <button onClick={() => setFilterCaja('afiliaciones')} className={`px-2.5 py-1 rounded-lg ${filterCaja === 'afiliaciones' ? 'bg-blue-600 text-white font-bold' : 'text-slate-600'}`}>
                   Afiliaciones
                 </button>
               </div>
 
               <div className="flex items-center space-x-1 bg-slate-100 p-1 rounded-xl">
-                <button
-                  onClick={() => setFilterMetodo('todos')}
-                  className={`px-2 py-1 rounded-lg ${filterMetodo === 'todos' ? 'bg-white font-bold shadow-sm' : 'text-slate-600'}`}
-                >
+                <button onClick={() => setFilterMetodo('todos')} className={`px-2 py-1 rounded-lg ${filterMetodo === 'todos' ? 'bg-white font-bold shadow-sm' : 'text-slate-600'}`}>
                   Todos
                 </button>
-                <button
-                  onClick={() => setFilterMetodo('efectivo')}
-                  className={`px-2 py-1 rounded-lg ${filterMetodo === 'efectivo' ? 'bg-slate-900 text-white font-bold' : 'text-slate-600'}`}
-                >
+                <button onClick={() => setFilterMetodo('efectivo')} className={`px-2 py-1 rounded-lg ${filterMetodo === 'efectivo' ? 'bg-slate-900 text-white font-bold' : 'text-slate-600'}`}>
                   Efectivo
                 </button>
-                <button
-                  onClick={() => setFilterMetodo('qr')}
-                  className={`px-2 py-1 rounded-lg ${filterMetodo === 'qr' ? 'bg-slate-900 text-white font-bold' : 'text-slate-600'}`}
-                >
+                <button onClick={() => setFilterMetodo('qr')} className={`px-2 py-1 rounded-lg ${filterMetodo === 'qr' ? 'bg-slate-900 text-white font-bold' : 'text-slate-600'}`}>
                   QR
                 </button>
               </div>
@@ -867,20 +1024,12 @@ export default function EgresosView() {
                   <div key={egreso.id} className="p-4 hover:bg-slate-50 transition-colors space-y-2">
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
                       <div className="flex items-start space-x-3">
-                        <span
-                          className={`p-2 rounded-xl mt-0.5 ${
-                            isServicios ? 'bg-emerald-50 text-emerald-600' : 'bg-blue-50 text-blue-600'
-                          }`}
-                        >
+                        <span className={`p-2 rounded-xl mt-0.5 ${isServicios ? 'bg-emerald-50 text-emerald-600' : 'bg-blue-50 text-blue-600'}`}>
                           <ArrowDownCircle className="w-4 h-4" />
                         </span>
                         <div>
                           <div className="flex items-center space-x-2">
-                            <span
-                              className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
-                                isServicios ? 'bg-emerald-100 text-emerald-800' : 'bg-blue-100 text-blue-800'
-                              }`}
-                            >
+                            <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${isServicios ? 'bg-emerald-100 text-emerald-800' : 'bg-blue-100 text-blue-800'}`}>
                               Caja {isServicios ? 'Servicios' : 'Afiliaciones'}
                             </span>
                             <span className="font-semibold text-slate-800">{egreso.categoria}</span>
@@ -892,42 +1041,60 @@ export default function EgresosView() {
                         </div>
                       </div>
 
-                      <div className="flex items-center space-x-3 self-end sm:self-center">
-                        <div className="text-right">
+                      <div className="flex items-center space-x-2 self-end sm:self-center">
+                        <div className="text-right mr-1">
                           <span className={`text-sm font-bold block ${isAnulado ? 'line-through text-slate-400' : 'text-red-600'}`}>
                             -{parseFloat(egreso.monto).toFixed(2)} Bs
                           </span>
                           <span className="text-[10px] text-slate-400 uppercase font-medium">
-                            {egreso.metodo_pago === 'qr' ? 'QR / Banco' : 'Efectivo en mano'}
+                            {egreso.metodo_pago === 'qr' ? 'QR / Banco' : 'Efectivo'}
                           </span>
                         </div>
 
                         {egreso.recibo_drive_url && (
-                          <a
-                            href={egreso.recibo_drive_url}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="p-1.5 text-blue-600 hover:text-blue-800 bg-blue-50 rounded-lg"
-                            title="Ver foto del recibo"
-                          >
+                          <a href={egreso.recibo_drive_url} target="_blank" rel="noreferrer" className="p-1.5 text-blue-600 bg-blue-50 rounded-lg" title="Ver foto del recibo">
                             <ExternalLink className="w-3.5 h-3.5" />
                           </a>
                         )}
 
                         {isAnulado ? (
-                          <span className="text-[10px] font-bold text-red-600 bg-red-50 px-2 py-0.5 rounded">
-                            Anulado
-                          </span>
+                          <span className="text-[10px] font-bold text-red-600 bg-red-50 px-2 py-0.5 rounded">Anulado</span>
                         ) : (
+                          isAdmin && (
+                            <>
+                              <button type="button" onClick={() => openEditEgresoModal(egreso)} title="Editar egreso" className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg">
+                                <Edit2 className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setAnulandoEgresoId(egreso.id)
+                                  setMotivoAnulacion('')
+                                }}
+                                className="text-[11px] font-semibold text-orange-600 hover:bg-orange-50 px-2 py-1 rounded-lg"
+                              >
+                                Anular
+                              </button>
+                            </>
+                          )
+                        )}
+
+                        {isAdmin && (
                           <button
                             type="button"
-                            onClick={() => {
-                              setAnulandoEgresoId(egreso.id)
-                              setMotivoAnulacion('')
-                            }}
-                            className="text-[11px] font-semibold text-red-600 hover:bg-red-50 px-2 py-1 rounded-lg transition-colors"
+                            onClick={() =>
+                              setConfirmState({
+                                open: true,
+                                tipo: 'eliminacion',
+                                entity: 'egreso',
+                                target: egreso,
+                                advertencia: '',
+                              })
+                            }
+                            title="Eliminar egreso cargado por error"
+                            className="p-1.5 text-red-600 hover:bg-red-50 rounded-lg"
                           >
-                            Anular
+                            <Trash2 className="w-3.5 h-3.5" />
                           </button>
                         )}
                       </div>
@@ -948,17 +1115,13 @@ export default function EgresosView() {
                           value={motivoAnulacion}
                           onChange={(e) => setMotivoAnulacion(e.target.value)}
                           placeholder="Escribe el motivo de anulación del gasto..."
-                          className="w-full px-2.5 py-1 text-xs bg-white border border-slate-300 rounded-lg focus:outline-none"
+                          className="w-full px-2.5 py-1 text-xs bg-white border border-slate-300 rounded-lg"
                         />
                         <div className="flex justify-end gap-2">
                           <button type="button" onClick={() => setAnulandoEgresoId(null)} className="text-[11px] text-slate-600">
                             Cancelar
                           </button>
-                          <button
-                            type="button"
-                            onClick={() => handleAnularEgreso(egreso.id)}
-                            className="px-3 py-1 bg-red-600 text-white rounded-lg text-[11px] font-bold"
-                          >
+                          <button type="button" onClick={() => handleAnularEgreso(egreso.id)} className="px-3 py-1 bg-red-600 text-white rounded-lg text-[11px] font-bold">
                             Confirmar Anulación
                           </button>
                         </div>
@@ -972,7 +1135,7 @@ export default function EgresosView() {
         </>
       )}
 
-      {/* Modal: Registrar Nuevo Egreso General */}
+      {/* Modal Crear / Editar Egreso */}
       {isNewModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-sm overflow-y-auto animate-fadeIn">
           <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-md my-8 overflow-hidden">
@@ -982,7 +1145,9 @@ export default function EgresosView() {
                   <ArrowDownCircle className="w-5 h-5" />
                 </div>
                 <div>
-                  <h3 className="font-bold text-base leading-tight">Registrar Egreso</h3>
+                  <h3 className="font-bold text-base leading-tight">
+                    {editingEgreso ? 'Editar Egreso (Auditado)' : 'Registrar Egreso'}
+                  </h3>
                   <p className="text-xs text-slate-400">Descargo de fondos con respaldo fotográfico</p>
                 </div>
               </div>
@@ -993,30 +1158,12 @@ export default function EgresosView() {
 
             <form onSubmit={handleSaveEgreso} className="p-6 space-y-4">
               <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1.5">
-                  Caja de donde sale el dinero <span className="text-red-500">*</span>
-                </label>
+                <label className="block text-xs font-semibold text-slate-700 mb-1.5">Caja *</label>
                 <div className="grid grid-cols-2 gap-3">
-                  <button
-                    type="button"
-                    onClick={() => handleCajaChange('servicios')}
-                    className={`py-2 px-3 rounded-xl border text-xs font-bold transition-all ${
-                      caja === 'servicios'
-                        ? 'bg-emerald-600 text-white border-emerald-600 shadow-sm'
-                        : 'bg-slate-50 text-slate-700 border-slate-300'
-                    }`}
-                  >
+                  <button type="button" onClick={() => handleCajaChange('servicios')} className={`py-2 px-3 rounded-xl border text-xs font-bold ${caja === 'servicios' ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-slate-50 text-slate-700 border-slate-300'}`}>
                     Caja Servicios
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => handleCajaChange('afiliaciones')}
-                    className={`py-2 px-3 rounded-xl border text-xs font-bold transition-all ${
-                      caja === 'afiliaciones'
-                        ? 'bg-blue-600 text-white border-blue-600 shadow-sm'
-                        : 'bg-slate-50 text-slate-700 border-slate-300'
-                    }`}
-                  >
+                  <button type="button" onClick={() => handleCajaChange('afiliaciones')} className={`py-2 px-3 rounded-xl border text-xs font-bold ${caja === 'afiliaciones' ? 'bg-blue-600 text-white border-blue-600' : 'bg-slate-50 text-slate-700 border-slate-300'}`}>
                     Caja Afiliaciones
                   </button>
                 </div>
@@ -1024,11 +1171,7 @@ export default function EgresosView() {
 
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">Categoría</label>
-                <select
-                  value={categoria}
-                  onChange={(e) => setCategoria(e.target.value)}
-                  className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-300 rounded-xl focus:ring-2 focus:ring-amber-500 focus:outline-none"
-                >
+                <select value={categoria} onChange={(e) => setCategoria(e.target.value)} className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-300 rounded-xl">
                   {(caja === 'servicios' ? CATEGORIAS_SERVICIOS : CATEGORIAS_AFILIACIONES).map((cat) => (
                     <option key={cat} value={cat}>
                       {cat}
@@ -1038,72 +1181,29 @@ export default function EgresosView() {
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  Descripción del Gasto <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  required
-                  value={descripcion}
-                  onChange={(e) => setDescripcion(e.target.value)}
-                  placeholder="Ej. Compra de material de limpieza..."
-                  className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-300 rounded-xl focus:ring-2 focus:ring-amber-500 focus:outline-none"
-                />
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Descripción *</label>
+                <input type="text" required value={descripcion} onChange={(e) => setDescripcion(e.target.value)} className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-300 rounded-xl" />
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    Monto (Bs) <span className="text-red-500">*</span>
-                  </label>
-                  <input
-                    type="number"
-                    step="0.50"
-                    min="0.50"
-                    required
-                    value={monto}
-                    onChange={(e) => setMonto(e.target.value)}
-                    placeholder="0.00"
-                    className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-xl font-bold focus:ring-2 focus:ring-amber-500 focus:outline-none"
-                  />
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">Monto (Bs) *</label>
+                  <input type="number" step="0.50" min="0.50" required value={monto} onChange={(e) => setMonto(e.target.value)} className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-xl font-bold" />
                 </div>
-
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 mb-1">Fecha</label>
-                  <input
-                    type="date"
-                    required
-                    value={fecha}
-                    onChange={(e) => setFecha(e.target.value)}
-                    className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-300 rounded-xl focus:outline-none"
-                  />
+                  <input type="date" required value={fecha} onChange={(e) => setFecha(e.target.value)} className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-300 rounded-xl" />
                 </div>
               </div>
 
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1.5">Pagado con</label>
                 <div className="grid grid-cols-2 gap-3">
-                  <button
-                    type="button"
-                    onClick={() => setMetodoPago('efectivo')}
-                    className={`py-2 px-3 rounded-xl border text-xs font-bold flex items-center justify-center gap-2 ${
-                      metodoPago === 'efectivo'
-                        ? 'bg-slate-900 text-white border-slate-900'
-                        : 'bg-slate-50 text-slate-700 border-slate-300'
-                    }`}
-                  >
+                  <button type="button" onClick={() => setMetodoPago('efectivo')} className={`py-2 px-3 rounded-xl border text-xs font-bold flex items-center justify-center gap-2 ${metodoPago === 'efectivo' ? 'bg-slate-900 text-white border-slate-900' : 'bg-slate-50 text-slate-700 border-slate-300'}`}>
                     <Coins className="w-4 h-4" />
-                    <span>Efectivo en mano</span>
+                    <span>Efectivo</span>
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => setMetodoPago('qr')}
-                    className={`py-2 px-3 rounded-xl border text-xs font-bold flex items-center justify-center gap-2 ${
-                      metodoPago === 'qr'
-                        ? 'bg-blue-600 text-white border-blue-600'
-                        : 'bg-slate-50 text-slate-700 border-slate-300'
-                    }`}
-                  >
+                  <button type="button" onClick={() => setMetodoPago('qr')} className={`py-2 px-3 rounded-xl border text-xs font-bold flex items-center justify-center gap-2 ${metodoPago === 'qr' ? 'bg-blue-600 text-white border-blue-600' : 'bg-slate-50 text-slate-700 border-slate-300'}`}>
                     <QrCode className="w-4 h-4" />
                     <span>QR / Banco</span>
                   </button>
@@ -1118,11 +1218,7 @@ export default function EgresosView() {
                       <ExternalLink className="w-3.5 h-3.5" />
                     </a>
                   )}
-                  <button
-                    type="button"
-                    onClick={() => setIsPhotoModalOpen(true)}
-                    className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 rounded-xl text-xs font-semibold text-slate-700 flex items-center gap-1"
-                  >
+                  <button type="button" onClick={() => setIsPhotoModalOpen(true)} className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 rounded-xl text-xs font-semibold text-slate-700 flex items-center gap-1">
                     <Camera className="w-3.5 h-3.5 text-slate-500" />
                     <span>{reciboDriveUrl ? 'Cambiar Foto' : 'Adjuntar Recibo'}</span>
                   </button>
@@ -1133,12 +1229,8 @@ export default function EgresosView() {
                 <button type="button" onClick={() => setIsNewModalOpen(false)} className="px-4 py-2 text-xs font-semibold text-slate-600">
                   Cancelar
                 </button>
-                <button
-                  type="submit"
-                  disabled={saving}
-                  className="px-5 py-2.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold shadow-md"
-                >
-                  {saving ? 'Guardando...' : 'Confirmar Egreso'}
+                <button type="submit" disabled={saving} className="px-5 py-2.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold shadow-md">
+                  {saving ? 'Guardando...' : editingEgreso ? 'Actualizar Egreso' : 'Confirmar Egreso'}
                 </button>
               </div>
             </form>
@@ -1158,15 +1250,17 @@ export default function EgresosView() {
         </div>
       )}
 
-      {/* Modal: Registrar Adelanto / Pago Guardia */}
+      {/* Modal Crear / Editar Pago Guardia */}
       {isGuardiaModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-sm overflow-y-auto">
           <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-md my-8 overflow-hidden">
             <div className="bg-slate-900 px-6 py-4 text-white flex items-center justify-between">
               <div>
-                <h3 className="font-bold text-base">Adelanto / Pago del Guardia</h3>
+                <h3 className="font-bold text-base">
+                  {editingGuardia ? 'Editar Pago Guardia (Auditado)' : 'Adelanto / Pago del Guardia'}
+                </h3>
                 <p className="text-xs text-slate-400">
-                  {MESES[guardiaMes]} {guardiaAnio} • Crea egreso automático en Caja Servicios
+                  {MESES[guardiaMes]} {guardiaAnio} • Sincronizado con Egresos Servicios
                 </p>
               </div>
               <button onClick={() => setIsGuardiaModalOpen(false)}>
@@ -1177,17 +1271,7 @@ export default function EgresosView() {
             <form onSubmit={handleSavePagoGuardia} className="p-6 space-y-4">
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">Tipo de Pago</label>
-                <select
-                  value={gTipo}
-                  onChange={(e) => {
-                    const val = e.target.value
-                    setGTipo(val)
-                    if (val === 'saldo_fin_mes' && saldoPendienteGuardia > 0) {
-                      setGMonto(saldoPendienteGuardia.toFixed(2))
-                    }
-                  }}
-                  className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-300 rounded-xl font-bold"
-                >
+                <select value={gTipo} onChange={(e) => setGTipo(e.target.value)} className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-300 rounded-xl font-bold">
                   {TIPOS_GUARDIA.map((t) => (
                     <option key={t.value} value={t.value}>
                       {t.label}
@@ -1199,63 +1283,22 @@ export default function EgresosView() {
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 mb-1">Monto (Bs)</label>
-                  <input
-                    type="number"
-                    step="0.50"
-                    min="0.50"
-                    required
-                    value={gMonto}
-                    onChange={(e) => setGMonto(e.target.value)}
-                    placeholder="0.00"
-                    className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-xl font-bold"
-                  />
-                  {saldoPendienteGuardia > 0 && (
-                    <button
-                      type="button"
-                      onClick={() => setGMonto(saldoPendienteGuardia.toFixed(2))}
-                      className="text-[10px] text-emerald-700 font-semibold hover:underline mt-0.5"
-                    >
-                      Usar saldo pendiente ({saldoPendienteGuardia.toFixed(2)} Bs)
-                    </button>
-                  )}
+                  <input type="number" step="0.50" min="0.50" required value={gMonto} onChange={(e) => setGMonto(e.target.value)} className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-xl font-bold" />
                 </div>
-
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 mb-1">Fecha Real</label>
-                  <input
-                    type="date"
-                    required
-                    value={gFecha}
-                    onChange={(e) => setGFecha(e.target.value)}
-                    className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-300 rounded-xl"
-                  />
+                  <input type="date" required value={gFecha} onChange={(e) => setGFecha(e.target.value)} className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-300 rounded-xl" />
                 </div>
               </div>
 
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1.5">Método</label>
                 <div className="grid grid-cols-2 gap-3">
-                  <button
-                    type="button"
-                    onClick={() => setGMetodo('efectivo')}
-                    className={`py-2 px-3 rounded-xl border text-xs font-bold flex items-center justify-center gap-2 ${
-                      gMetodo === 'efectivo'
-                        ? 'bg-emerald-600 text-white border-emerald-600'
-                        : 'bg-slate-50 text-slate-700 border-slate-300'
-                    }`}
-                  >
+                  <button type="button" onClick={() => setGMetodo('efectivo')} className={`py-2 px-3 rounded-xl border text-xs font-bold flex items-center justify-center gap-2 ${gMetodo === 'efectivo' ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-slate-50 text-slate-700 border-slate-300'}`}>
                     <Coins className="w-4 h-4" />
                     <span>Efectivo</span>
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => setGMetodo('qr')}
-                    className={`py-2 px-3 rounded-xl border text-xs font-bold flex items-center justify-center gap-2 ${
-                      gMetodo === 'qr'
-                        ? 'bg-blue-600 text-white border-blue-600'
-                        : 'bg-slate-50 text-slate-700 border-slate-300'
-                    }`}
-                  >
+                  <button type="button" onClick={() => setGMetodo('qr')} className={`py-2 px-3 rounded-xl border text-xs font-bold flex items-center justify-center gap-2 ${gMetodo === 'qr' ? 'bg-blue-600 text-white border-blue-600' : 'bg-slate-50 text-slate-700 border-slate-300'}`}>
                     <QrCode className="w-4 h-4" />
                     <span>QR / Banco</span>
                   </button>
@@ -1263,29 +1306,19 @@ export default function EgresosView() {
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">Observaciones (Opcional)</label>
-                <input
-                  type="text"
-                  value={gObs}
-                  onChange={(e) => setGObs(e.target.value)}
-                  placeholder="Ej. Vale firmado por Don Juan..."
-                  className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-300 rounded-xl"
-                />
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Observaciones</label>
+                <input type="text" value={gObs} onChange={(e) => setGObs(e.target.value)} className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-300 rounded-xl" />
               </div>
 
               <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-xs">
-                <span className="text-slate-600">Foto del Vale Firmado (Drive):</span>
+                <span className="text-slate-600">Foto Vale (Drive):</span>
                 <div className="flex items-center gap-2">
                   {gFotoUrl && (
                     <a href={gFotoUrl} target="_blank" rel="noreferrer" className="text-blue-600 underline">
                       Ver
                     </a>
                   )}
-                  <button
-                    type="button"
-                    onClick={() => setIsGuardiaPhotoOpen(true)}
-                    className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 rounded-xl font-semibold text-slate-700 flex items-center gap-1"
-                  >
+                  <button type="button" onClick={() => setIsGuardiaPhotoOpen(true)} className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 rounded-xl font-semibold text-slate-700 flex items-center gap-1">
                     <Camera className="w-3.5 h-3.5" />
                     <span>{gFotoUrl ? 'Cambiar Foto' : 'Subir Vale'}</span>
                   </button>
@@ -1296,13 +1329,9 @@ export default function EgresosView() {
                 <button type="button" onClick={() => setIsGuardiaModalOpen(false)} className="px-4 py-2 text-xs text-slate-600">
                   Cancelar
                 </button>
-                <button
-                  type="submit"
-                  disabled={savingGuardia}
-                  className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center gap-1"
-                >
+                <button type="submit" disabled={savingGuardia} className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center gap-1">
                   <CheckCircle2 className="w-4 h-4" />
-                  <span>{savingGuardia ? 'Guardando...' : 'Confirmar Pago'}</span>
+                  <span>{savingGuardia ? 'Guardando...' : editingGuardia ? 'Actualizar Pago' : 'Confirmar Pago'}</span>
                 </button>
               </div>
             </form>
@@ -1321,6 +1350,27 @@ export default function EgresosView() {
           />
         </div>
       )}
+
+      <ConfirmMotivoModal
+        isOpen={confirmState.open}
+        onClose={() => setConfirmState({ open: false, tipo: 'edicion', entity: null, target: null, advertencia: '' })}
+        onConfirm={handleConfirmAudit}
+        tipo={confirmState.tipo}
+        titulo={
+          confirmState.entity === 'egreso'
+            ? confirmState.tipo === 'eliminacion'
+              ? 'Eliminar Egreso'
+              : 'Editar Egreso'
+            : confirmState.entity === 'guardia'
+            ? confirmState.tipo === 'eliminacion'
+              ? 'Eliminar Pago de Guardia'
+              : 'Editar Pago de Guardia'
+            : 'Editar Sueldo Mensual del Guardia'
+        }
+        descripcion="Se guardará el snapshot completo en bitacora_auditoria antes de aplicar la modificación."
+        advertencia={confirmState.advertencia}
+        loading={saving || savingGuardia || savingSueldo}
+      />
     </div>
   )
 }

@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
-import { registrarAuditoria } from '../../lib/auditoria'
+import { registrarAuditoria, registrarEdicionAuditoria, registrarEliminacionAuditoria } from '../../lib/auditoria'
 import { getLocalDateStr } from '../../lib/formatters'
-import { Sparkles, CheckCircle2, AlertCircle, X, Calendar, Percent, Edit2 } from 'lucide-react'
+import ConfirmMotivoModal from './ConfirmMotivoModal'
+import { Sparkles, CheckCircle2, AlertCircle, X, Calendar, Percent, Edit2, Trash2 } from 'lucide-react'
 
 export default function PerdonazoModal({ isOpen, onClose, onUpdated }) {
   const { user, isAdmin } = useAuth()
@@ -13,13 +14,15 @@ export default function PerdonazoModal({ isOpen, onClose, onUpdated }) {
   const [errorMsg, setErrorMsg] = useState('')
   const [successMsg, setSuccessMsg] = useState('')
 
-  const [editingId, setEditingId] = useState(null)
+  const [editingItem, setEditingItem] = useState(null)
   const [nombre, setNombre] = useState('')
   const [fechaInicio, setFechaInicio] = useState(getLocalDateStr())
   const [fechaFin, setFechaFin] = useState(getLocalDateStr())
   const [porcentaje, setPorcentaje] = useState('50')
   const [activo, setActivo] = useState(true)
   const [observaciones, setObservaciones] = useState('')
+
+  const [confirmState, setConfirmState] = useState({ open: false, tipo: 'edicion', target: null })
 
   const fetchCampanias = async () => {
     setLoading(true)
@@ -48,7 +51,7 @@ export default function PerdonazoModal({ isOpen, onClose, onUpdated }) {
   }, [isOpen])
 
   const resetForm = () => {
-    setEditingId(null)
+    setEditingItem(null)
     setNombre('')
     setFechaInicio(getLocalDateStr())
     setFechaFin(getLocalDateStr())
@@ -60,7 +63,7 @@ export default function PerdonazoModal({ isOpen, onClose, onUpdated }) {
   if (!isOpen) return null
 
   const handleEdit = (c) => {
-    setEditingId(c.id)
+    setEditingItem(c)
     setNombre(c.nombre || '')
     setFechaInicio(c.fecha_inicio || getLocalDateStr())
     setFechaFin(c.fecha_fin || getLocalDateStr())
@@ -83,6 +86,11 @@ export default function PerdonazoModal({ isOpen, onClose, onUpdated }) {
       return
     }
 
+    if (editingItem) {
+      setConfirmState({ open: true, tipo: 'edicion', target: editingItem })
+      return
+    }
+
     setSaving(true)
     setErrorMsg('')
     setSuccessMsg('')
@@ -96,43 +104,96 @@ export default function PerdonazoModal({ isOpen, onClose, onUpdated }) {
         activo,
         observaciones: observaciones.trim() || null,
       }
+      const { data, error } = await supabase.from('campañas_perdonazo').insert([payload]).select().single()
+      if (error) throw error
 
-      if (editingId) {
-        const { error } = await supabase.from('campañas_perdonazo').update(payload).eq('id', editingId)
-        if (error) throw error
-
-        await registrarAuditoria({
-          usuarioId: user?.id,
-          accion: 'CAMPANA_PERDONAZO_EDITADA',
-          detalleJson: {
-            descripcion: `Edición de perdonazo "${payload.nombre}" (${pct}% del ${fechaInicio} al ${fechaFin})`,
-            campania_id: editingId,
-            ...payload,
-          },
-        })
-        setSuccessMsg('Campaña de perdonazo actualizada y registrada en bitácora.')
-      } else {
-        const { data, error } = await supabase.from('campañas_perdonazo').insert([payload]).select().single()
-        if (error) throw error
-
-        await registrarAuditoria({
-          usuarioId: user?.id,
-          accion: 'CAMPANA_PERDONAZO_CREADA',
-          detalleJson: {
-            descripcion: `Nueva campaña de perdonazo "${payload.nombre}" (${pct}% del ${fechaInicio} al ${fechaFin})`,
-            campania_id: data?.id,
-            ...payload,
-          },
-        })
-        setSuccessMsg('Campaña de perdonazo creada y activada con éxito.')
-      }
-
+      await registrarAuditoria({
+        usuarioId: user?.id,
+        accion: 'CAMPANA_PERDONAZO_CREADA',
+        detalleJson: {
+          descripcion: `Nueva campaña de perdonazo "${payload.nombre}" (${pct}% del ${fechaInicio} al ${fechaFin})`,
+          tabla: 'campañas_perdonazo',
+          registro_id: data?.id,
+          ...payload,
+        },
+      })
+      setSuccessMsg('Campaña de perdonazo creada y activada con éxito.')
       resetForm()
       await fetchCampanias()
       if (onUpdated) onUpdated()
     } catch (err) {
       console.error(err)
       setErrorMsg('Error al guardar perdonazo: ' + err.message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleConfirmAudit = async (motivo) => {
+    const { tipo, target } = confirmState
+    if (!target) return
+    setSaving(true)
+    setErrorMsg('')
+
+    try {
+      if (tipo === 'edicion') {
+        const pct = parseFloat(porcentaje)
+        const payload = {
+          nombre: nombre.trim(),
+          fecha_inicio: fechaInicio,
+          fecha_fin: fechaFin,
+          porcentaje_descuento: pct,
+          activo,
+          observaciones: observaciones.trim() || null,
+        }
+
+        await registrarEdicionAuditoria({
+          usuarioId: user?.id,
+          modulo: 'Perdonazo de Multas',
+          tabla: 'campañas_perdonazo',
+          registroId: target.id,
+          motivo,
+          resumen: `Edición de campaña "${payload.nombre}"`,
+          datosAnteriores: {
+            nombre: target.nombre,
+            fecha_inicio: target.fecha_inicio,
+            fecha_fin: target.fecha_fin,
+            porcentaje_descuento: target.porcentaje_descuento,
+            activo: target.activo,
+            observaciones: target.observaciones,
+          },
+          datosNuevos: payload,
+        })
+
+        const { error } = await supabase.from('campañas_perdonazo').update(payload).eq('id', target.id)
+        if (error) throw error
+
+        setSuccessMsg('Campaña actualizada y auditada en bitácora.')
+        resetForm()
+      } else {
+        await registrarEliminacionAuditoria({
+          usuarioId: user?.id,
+          modulo: 'Perdonazo de Multas',
+          tabla: 'campañas_perdonazo',
+          registroId: target.id,
+          motivo,
+          resumen: `Eliminación de campaña "${target.nombre}" (-${target.porcentaje_descuento}%)`,
+          datosAnteriores: target,
+        })
+
+        const { error } = await supabase.from('campañas_perdonazo').delete().eq('id', target.id)
+        if (error) throw error
+
+        setSuccessMsg(`Campaña "${target.nombre}" eliminada con auditoría en bitácora.`)
+        if (editingItem?.id === target.id) resetForm()
+      }
+
+      setConfirmState({ open: false, tipo: 'edicion', target: null })
+      await fetchCampanias()
+      if (onUpdated) onUpdated()
+    } catch (err) {
+      setErrorMsg(err.message)
+      setConfirmState({ open: false, tipo: 'edicion', target: null })
     } finally {
       setSaving(false)
     }
@@ -152,7 +213,8 @@ export default function PerdonazoModal({ isOpen, onClose, onUpdated }) {
         accion: 'CAMPANA_PERDONAZO_ESTADO',
         detalleJson: {
           descripcion: `Perdonazo "${c.nombre}" ${nuevoEstado ? 'activado' : 'desactivado'}`,
-          campania_id: c.id,
+          tabla: 'campañas_perdonazo',
+          registro_id: c.id,
           activo: nuevoEstado,
         },
       })
@@ -174,9 +236,7 @@ export default function PerdonazoModal({ isOpen, onClose, onUpdated }) {
             </div>
             <div>
               <h3 className="font-bold text-base leading-tight">Configurar Perdonazo de Multas</h3>
-              <p className="text-xs text-slate-400">
-                Descuento automático por rango de fechas (auditoría en bitácora)
-              </p>
+              <p className="text-xs text-slate-400">Edición y eliminación auditadas en bitácora</p>
             </div>
           </div>
           <button onClick={onClose} className="p-1 text-slate-400 hover:text-white">
@@ -201,7 +261,7 @@ export default function PerdonazoModal({ isOpen, onClose, onUpdated }) {
 
           <form onSubmit={handleSubmit} className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-3">
             <span className="text-xs font-bold uppercase tracking-wider text-purple-800 block border-b pb-1">
-              {editingId ? 'Editar Campaña de Perdonazo' : 'Nueva Campaña de Perdonazo'}
+              {editingItem ? 'Editar Campaña de Perdonazo (Auditado)' : 'Nueva Campaña de Perdonazo'}
             </span>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -272,7 +332,6 @@ export default function PerdonazoModal({ isOpen, onClose, onUpdated }) {
                 type="text"
                 value={observaciones}
                 onChange={(e) => setObservaciones(e.target.value)}
-                placeholder="Ej. Aprobado en asamblea extraordinaria..."
                 className="w-full px-3 py-2 text-xs bg-white border border-slate-300 rounded-xl"
               />
             </div>
@@ -289,12 +348,8 @@ export default function PerdonazoModal({ isOpen, onClose, onUpdated }) {
               </label>
 
               <div className="flex items-center gap-2">
-                {editingId && (
-                  <button
-                    type="button"
-                    onClick={resetForm}
-                    className="px-3 py-1.5 text-xs text-slate-600 hover:underline"
-                  >
+                {editingItem && (
+                  <button type="button" onClick={resetForm} className="px-3 py-1.5 text-xs text-slate-600 hover:underline">
                     Cancelar Edición
                   </button>
                 )}
@@ -303,13 +358,12 @@ export default function PerdonazoModal({ isOpen, onClose, onUpdated }) {
                   disabled={saving}
                   className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-bold shadow-sm"
                 >
-                  {saving ? 'Guardando...' : editingId ? 'Actualizar Campaña' : 'Crear Campaña'}
+                  {saving ? 'Guardando...' : editingItem ? 'Actualizar Campaña' : 'Crear Campaña'}
                 </button>
               </div>
             </div>
           </form>
 
-          {/* Listado */}
           <div className="space-y-2">
             <span className="text-xs font-bold uppercase tracking-wider text-slate-600 block">
               Campañas Registradas ({campanias.length})
@@ -342,14 +396,22 @@ export default function PerdonazoModal({ isOpen, onClose, onUpdated }) {
                         </p>
                       </div>
 
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-1.5">
                         <button
                           type="button"
                           onClick={() => handleEdit(c)}
-                          className="p-1.5 text-slate-600 hover:bg-slate-100 rounded-lg"
+                          className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg"
                           title="Editar campaña"
                         >
                           <Edit2 className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setConfirmState({ open: true, tipo: 'eliminacion', target: c })}
+                          className="p-1.5 text-red-600 hover:bg-red-50 rounded-lg"
+                          title="Eliminar campaña"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
                         </button>
                         <button
                           type="button"
@@ -371,6 +433,20 @@ export default function PerdonazoModal({ isOpen, onClose, onUpdated }) {
           </div>
         </div>
       </div>
+
+      <ConfirmMotivoModal
+        isOpen={confirmState.open}
+        onClose={() => setConfirmState({ open: false, tipo: 'edicion', target: null })}
+        onConfirm={handleConfirmAudit}
+        tipo={confirmState.tipo}
+        titulo={confirmState.tipo === 'eliminacion' ? 'Eliminar Campaña de Perdonazo' : 'Editar Campaña de Perdonazo'}
+        descripcion={
+          confirmState.target
+            ? `${confirmState.tipo === 'eliminacion' ? 'Se eliminará' : 'Se actualizará'} la campaña "${confirmState.target.nombre}" con registro previo en bitácora.`
+            : ''
+        }
+        loading={saving}
+      />
     </div>
   )
 }

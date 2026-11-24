@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
-import { registrarAuditoria } from '../../lib/auditoria'
+import { registrarAuditoria, registrarEdicionAuditoria } from '../../lib/auditoria'
 import { getLocalDateStr } from '../../lib/formatters'
+import ConfirmMotivoModal from './ConfirmMotivoModal'
 import { Wallet, CheckCircle2, AlertCircle, X, ShieldAlert, Calendar, FileText } from 'lucide-react'
 
 export default function SaldosInicialesModal({ isOpen, onClose, onUpdated }) {
@@ -13,6 +14,7 @@ export default function SaldosInicialesModal({ isOpen, onClose, onUpdated }) {
   const [successMsg, setSuccessMsg] = useState('')
 
   const [cicloId, setCicloId] = useState(null)
+  const [cicloAnteriorSnapshot, setCicloAnteriorSnapshot] = useState(null)
   const [esInicial, setEsInicial] = useState(true)
   const [nombreCiclo, setNombreCiclo] = useState('Ciclo Inicial - Entrega Tesorero Anterior')
   const [serviciosEfectivo, setServiciosEfectivo] = useState(0)
@@ -22,6 +24,8 @@ export default function SaldosInicialesModal({ isOpen, onClose, onUpdated }) {
   const [fechaArranque, setFechaArranque] = useState(getLocalDateStr())
   const [observaciones, setObservaciones] = useState('')
 
+  const [confirmEditOpen, setConfirmEditOpen] = useState(false)
+
   useEffect(() => {
     if (!isOpen) return
 
@@ -29,8 +33,8 @@ export default function SaldosInicialesModal({ isOpen, onClose, onUpdated }) {
       setLoading(true)
       setErrorMsg('')
       setSuccessMsg('')
+      setConfirmEditOpen(false)
       try {
-        // 1. Buscar ciclo abierto en ciclos_hacienda
         const { data: cicloAbierto, error: cError } = await supabase
           .from('ciclos_hacienda')
           .select('*')
@@ -43,6 +47,15 @@ export default function SaldosInicialesModal({ isOpen, onClose, onUpdated }) {
 
         if (cicloAbierto) {
           setCicloId(cicloAbierto.id)
+          setCicloAnteriorSnapshot({
+            nombre: cicloAbierto.nombre,
+            fecha_inicio: cicloAbierto.fecha_inicio,
+            servicios_efectivo_inicial: parseFloat(cicloAbierto.servicios_efectivo_inicial) || 0,
+            servicios_qr_inicial: parseFloat(cicloAbierto.servicios_qr_inicial) || 0,
+            afiliaciones_efectivo_inicial: parseFloat(cicloAbierto.afiliaciones_efectivo_inicial) || 0,
+            afiliaciones_qr_inicial: parseFloat(cicloAbierto.afiliaciones_qr_inicial) || 0,
+            observaciones: cicloAbierto.observaciones || '',
+          })
           setEsInicial(Boolean(cicloAbierto.es_inicial))
           setNombreCiclo(cicloAbierto.nombre || 'Ciclo Actual')
           setServiciosEfectivo(cicloAbierto.servicios_efectivo_inicial ?? 0)
@@ -55,8 +68,8 @@ export default function SaldosInicialesModal({ isOpen, onClose, onUpdated }) {
           return
         }
 
-        // 2. Respaldo desde saldos_iniciales si aún no hay ciclo creado
         setCicloId(null)
+        setCicloAnteriorSnapshot(null)
         setEsInicial(true)
         setNombreCiclo('Ciclo Inicial - Entrega Tesorero Anterior')
         const { data, error } = await supabase.from('saldos_iniciales').select('*')
@@ -93,109 +106,137 @@ export default function SaldosInicialesModal({ isOpen, onClose, onUpdated }) {
 
   if (!isOpen) return null
 
-  const handleSave = async (e) => {
-    e.preventDefault()
+  const buildPayload = () => ({
+    nombre: nombreCiclo.trim() || 'Ciclo Inicial - Entrega Tesorero Anterior',
+    fecha_inicio: fechaArranque,
+    es_inicial: esInicial,
+    estado: 'abierto',
+    servicios_efectivo_inicial: parseFloat(serviciosEfectivo) || 0,
+    servicios_qr_inicial: parseFloat(serviciosQr) || 0,
+    afiliaciones_efectivo_inicial: parseFloat(afiliacionesEfectivo) || 0,
+    afiliaciones_qr_inicial: parseFloat(afiliacionesQr) || 0,
+    observaciones: observaciones.trim() || 'Entrega de saldo inicial de tesorero anterior',
+  })
+
+  const executeSave = async (motivo = '') => {
     setErrorMsg('')
     setSuccessMsg('')
     setSaving(true)
 
-    const servEf = parseFloat(serviciosEfectivo) || 0
-    const servQr = parseFloat(serviciosQr) || 0
-    const afilEf = parseFloat(afiliacionesEfectivo) || 0
-    const afilQr = parseFloat(afiliacionesQr) || 0
+    const cicloPayload = buildPayload()
 
     try {
-      const cicloPayload = {
-        nombre: nombreCiclo.trim() || 'Ciclo Inicial - Entrega Tesorero Anterior',
-        fecha_inicio: fechaArranque,
-        es_inicial: esInicial,
-        estado: 'abierto',
-        servicios_efectivo_inicial: servEf,
-        servicios_qr_inicial: servQr,
-        afiliaciones_efectivo_inicial: afilEf,
-        afiliaciones_qr_inicial: afilQr,
-        observaciones: observaciones.trim() || 'Entrega de saldo inicial de tesorero anterior',
-      }
-
       if (cicloId) {
+        const datosNuevos = {
+          nombre: cicloPayload.nombre,
+          fecha_inicio: cicloPayload.fecha_inicio,
+          servicios_efectivo_inicial: cicloPayload.servicios_efectivo_inicial,
+          servicios_qr_inicial: cicloPayload.servicios_qr_inicial,
+          afiliaciones_efectivo_inicial: cicloPayload.afiliaciones_efectivo_inicial,
+          afiliaciones_qr_inicial: cicloPayload.afiliaciones_qr_inicial,
+          observaciones: cicloPayload.observaciones,
+        }
+
+        // 1. Auditoría obligatoria ANTES de actualizar
+        await registrarEdicionAuditoria({
+          usuarioId: user?.id,
+          modulo: 'Saldos Iniciales / Ciclos',
+          tabla: 'ciclos_hacienda',
+          registroId: cicloId,
+          motivo,
+          resumen: `Edición de saldos iniciales del ciclo "${cicloPayload.nombre}"`,
+          datosAnteriores: cicloAnteriorSnapshot,
+          datosNuevos,
+        })
+
+        // 2. Actualizar ciclo
         const { error } = await supabase
           .from('ciclos_hacienda')
           .update(cicloPayload)
           .eq('id', cicloId)
         if (error) throw error
       } else {
-        const { error } = await supabase
+        const { data: created, error } = await supabase
           .from('ciclos_hacienda')
           .insert([cicloPayload])
+          .select()
+          .single()
         if (error) throw error
+
+        await registrarAuditoria({
+          usuarioId: user?.id,
+          accion: 'CONFIGURACION_SALDO_INICIAL_CICLO',
+          detalleJson: {
+            descripcion: `Configuración inicial de ciclo "${cicloPayload.nombre}"`,
+            tabla: 'ciclos_hacienda',
+            registro_id: created?.id,
+            ...cicloPayload,
+          },
+        })
       }
 
-      // Mantener sincronizada saldos_iniciales cuando es ciclo inicial
       if (esInicial) {
         const legacyPayload = [
           {
             caja: 'servicios',
             metodo_pago: 'efectivo',
-            monto_inicial: servEf,
+            monto_inicial: cicloPayload.servicios_efectivo_inicial,
             fecha_arranque: fechaArranque,
-            observaciones: observaciones.trim() || 'Entrega Tesorero Anterior - Servicios Efectivo',
+            observaciones: cicloPayload.observaciones,
           },
           {
             caja: 'servicios',
             metodo_pago: 'qr',
-            monto_inicial: servQr,
+            monto_inicial: cicloPayload.servicios_qr_inicial,
             fecha_arranque: fechaArranque,
-            observaciones: observaciones.trim() || 'Entrega Tesorero Anterior - Servicios QR',
+            observaciones: cicloPayload.observaciones,
           },
           {
             caja: 'afiliaciones',
             metodo_pago: 'efectivo',
-            monto_inicial: afilEf,
+            monto_inicial: cicloPayload.afiliaciones_efectivo_inicial,
             fecha_arranque: fechaArranque,
-            observaciones: observaciones.trim() || 'Entrega Tesorero Anterior - Afiliaciones Efectivo',
+            observaciones: cicloPayload.observaciones,
           },
           {
             caja: 'afiliaciones',
             metodo_pago: 'qr',
-            monto_inicial: afilQr,
+            monto_inicial: cicloPayload.afiliaciones_qr_inicial,
             fecha_arranque: fechaArranque,
-            observaciones: observaciones.trim() || 'Entrega Tesorero Anterior - Afiliaciones QR',
+            observaciones: cicloPayload.observaciones,
           },
         ]
         await supabase.from('saldos_iniciales').upsert(legacyPayload, { onConflict: 'caja,metodo_pago' })
       }
 
-      await registrarAuditoria({
-        usuarioId: user?.id,
-        accion: 'CONFIGURACION_SALDO_INICIAL_CICLO',
-        detalleJson: {
-          descripcion: `Configuración de saldo inicial (${cicloPayload.nombre})`,
-          ...cicloPayload,
-        },
-      })
-
-      setSuccessMsg('¡Saldos iniciales del ciclo guardados correctamente!')
+      setConfirmEditOpen(false)
+      setSuccessMsg('¡Saldos iniciales del ciclo guardados y auditados correctamente!')
       if (onUpdated) onUpdated()
       setTimeout(() => {
         onClose()
       }, 900)
     } catch (err) {
       console.error('Error guardando saldos iniciales:', err)
-      const isRlsError = err.message?.includes('violates row-level security policy') || err.code === '42501'
-      setErrorMsg(
-        isRlsError
-          ? 'Bloqueado por política RLS: debes iniciar sesión como Administrador para modificar los saldos iniciales.'
-          : 'Error al guardar saldos iniciales: ' + (err.message || 'Error desconocido')
-      )
+      setErrorMsg(err.message || 'Error al guardar saldos iniciales')
+      setConfirmEditOpen(false)
     } finally {
       setSaving(false)
+    }
+  }
+
+  const handleFormSubmit = (e) => {
+    e.preventDefault()
+    if (cicloId) {
+      // Si ya existe el ciclo, exigir motivo obligatorio de edición
+      setConfirmEditOpen(true)
+    } else {
+      executeSave()
     }
   }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-sm overflow-y-auto animate-fadeIn">
       <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-lg my-8 overflow-hidden">
-        {/* Header */}
         <div className="bg-slate-900 px-6 py-4 text-white flex items-center justify-between">
           <div className="flex items-center space-x-2.5">
             <div className="p-2 bg-emerald-500/20 text-emerald-400 rounded-lg">
@@ -218,8 +259,7 @@ export default function SaldosInicialesModal({ isOpen, onClose, onUpdated }) {
           </button>
         </div>
 
-        {/* Body */}
-        <form onSubmit={handleSave} className="p-6 space-y-4 max-h-[78vh] overflow-y-auto">
+        <form onSubmit={handleFormSubmit} className="p-6 space-y-4 max-h-[78vh] overflow-y-auto">
           {!isAdmin && (
             <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-900 flex items-start gap-2">
               <ShieldAlert className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
@@ -273,7 +313,6 @@ export default function SaldosInicialesModal({ isOpen, onClose, onUpdated }) {
                 </div>
               </div>
 
-              {/* Caja 1: Servicios Básicos */}
               <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-3">
                 <div className="flex items-center justify-between border-b border-slate-200 pb-1.5">
                   <span className="text-xs font-bold uppercase tracking-wider text-emerald-700">
@@ -284,9 +323,7 @@ export default function SaldosInicialesModal({ isOpen, onClose, onUpdated }) {
 
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="block text-xs font-semibold text-slate-700 mb-1">
-                      Efectivo en Mano (Bs)
-                    </label>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">Efectivo en Mano (Bs)</label>
                     <input
                       type="number"
                       step="0.01"
@@ -294,13 +331,11 @@ export default function SaldosInicialesModal({ isOpen, onClose, onUpdated }) {
                       required
                       value={serviciosEfectivo}
                       onChange={(e) => setServiciosEfectivo(e.target.value)}
-                      className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:outline-none font-bold text-slate-900"
+                      className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-xl font-bold text-slate-900"
                     />
                   </div>
                   <div>
-                    <label className="block text-xs font-semibold text-slate-700 mb-1">
-                      Saldo en QR / Banco (Bs)
-                    </label>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">Saldo en QR / Banco (Bs)</label>
                     <input
                       type="number"
                       step="0.01"
@@ -308,13 +343,12 @@ export default function SaldosInicialesModal({ isOpen, onClose, onUpdated }) {
                       required
                       value={serviciosQr}
                       onChange={(e) => setServiciosQr(e.target.value)}
-                      className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:outline-none font-bold text-slate-900"
+                      className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-xl font-bold text-slate-900"
                     />
                   </div>
                 </div>
               </div>
 
-              {/* Caja 2: Afiliaciones */}
               <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-3">
                 <div className="flex items-center justify-between border-b border-slate-200 pb-1.5">
                   <span className="text-xs font-bold uppercase tracking-wider text-blue-700">
@@ -325,9 +359,7 @@ export default function SaldosInicialesModal({ isOpen, onClose, onUpdated }) {
 
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="block text-xs font-semibold text-slate-700 mb-1">
-                      Efectivo en Mano (Bs)
-                    </label>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">Efectivo en Mano (Bs)</label>
                     <input
                       type="number"
                       step="0.01"
@@ -335,13 +367,11 @@ export default function SaldosInicialesModal({ isOpen, onClose, onUpdated }) {
                       required
                       value={afiliacionesEfectivo}
                       onChange={(e) => setAfiliacionesEfectivo(e.target.value)}
-                      className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:outline-none font-bold text-slate-900"
+                      className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-xl font-bold text-slate-900"
                     />
                   </div>
                   <div>
-                    <label className="block text-xs font-semibold text-slate-700 mb-1">
-                      Saldo en QR / Banco (Bs)
-                    </label>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">Saldo en QR / Banco (Bs)</label>
                     <input
                       type="number"
                       step="0.01"
@@ -349,7 +379,7 @@ export default function SaldosInicialesModal({ isOpen, onClose, onUpdated }) {
                       required
                       value={afiliacionesQr}
                       onChange={(e) => setAfiliacionesQr(e.target.value)}
-                      className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:outline-none font-bold text-slate-900"
+                      className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-xl font-bold text-slate-900"
                     />
                   </div>
                 </div>
@@ -364,32 +394,37 @@ export default function SaldosInicialesModal({ isOpen, onClose, onUpdated }) {
                   rows={2}
                   value={observaciones}
                   onChange={(e) => setObservaciones(e.target.value)}
-                  placeholder="Ej. Entrega de caja por tesorero saliente según acta de fecha..."
-                  className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                  className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-300 rounded-xl"
                 />
               </div>
             </>
           )}
 
           <div className="pt-2 flex items-center justify-end gap-2.5 border-t border-slate-100">
-            <button
-              type="button"
-              onClick={onClose}
-              className="px-4 py-2 text-xs font-semibold text-slate-600 hover:text-slate-800 transition-colors"
-            >
+            <button type="button" onClick={onClose} className="px-4 py-2 text-xs font-semibold text-slate-600">
               Cancelar
             </button>
             <button
               type="submit"
               disabled={saving || loading || !isAdmin}
-              className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-xl text-xs font-bold shadow-md shadow-emerald-900/20 transition-all flex items-center gap-1.5"
+              className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-xl text-xs font-bold shadow-md flex items-center gap-1.5"
             >
               <CheckCircle2 className="w-4 h-4" />
-              <span>{saving ? 'Guardando...' : 'Guardar Saldos del Ciclo'}</span>
+              <span>{saving ? 'Guardando...' : cicloId ? 'Guardar Cambios (Con Auditoría)' : 'Guardar Saldos del Ciclo'}</span>
             </button>
           </div>
         </form>
       </div>
+
+      <ConfirmMotivoModal
+        isOpen={confirmEditOpen}
+        onClose={() => setConfirmEditOpen(false)}
+        onConfirm={executeSave}
+        tipo="edicion"
+        titulo="Confirmar Edición de Saldos Iniciales"
+        descripcion="Se registrará en bitacora_auditoria el monto anterior vs. monto nuevo de ambas cajas junto con tu motivo."
+        loading={saving}
+      />
     </div>
   )
 }

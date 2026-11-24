@@ -1,12 +1,38 @@
 import React, { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
-import { ShieldAlert, AlertTriangle, Fingerprint, Lock, RefreshCw, Clock, CheckCircle2, FileText } from 'lucide-react'
+import {
+  ShieldAlert,
+  AlertTriangle,
+  Fingerprint,
+  Lock,
+  RefreshCw,
+  Clock,
+  FileText,
+  ChevronDown,
+  ChevronUp
+} from 'lucide-react'
+
+function getBadgeStyle(accion = '') {
+  const up = accion.toUpperCase()
+  if (up === 'ELIMINACION' || up.includes('ELIMINACION')) {
+    return 'bg-red-100 text-red-800 border-red-300'
+  }
+  if (up === 'EDICION' || up.includes('EDICION') || up.includes('ACTUALIZACION')) {
+    return 'bg-blue-100 text-blue-800 border-blue-300'
+  }
+  if (up.includes('ANULACION')) {
+    return 'bg-orange-100 text-orange-800 border-orange-300'
+  }
+  return 'bg-slate-100 text-slate-800 border-slate-200'
+}
 
 export default function BitacoraView({ role }) {
   const { isAdmin } = useAuth()
   const [logs, setLogs] = useState([])
   const [loading, setLoading] = useState(true)
+  const [filterTipo, setFilterTipo] = useState('todos') // 'todos' | 'edicion' | 'eliminacion' | 'anulacion'
+  const [expandedIds, setExpandedIds] = useState({})
 
   const fetchLogs = async () => {
     setLoading(true)
@@ -18,7 +44,7 @@ export default function BitacoraView({ role }) {
           perfiles_usuarios (nombre, cargo, rol)
         `)
         .order('fecha_hora', { ascending: false })
-        .limit(50)
+        .limit(100)
 
       if (error) throw error
       setLogs(data || [])
@@ -35,6 +61,10 @@ export default function BitacoraView({ role }) {
     }
   }, [isAdmin, role])
 
+  const toggleExpand = (id) => {
+    setExpandedIds((prev) => ({ ...prev, [id]: !prev[id] }))
+  }
+
   if (!isAdmin && role !== 'admin') {
     return (
       <div className="bg-red-50 border border-red-200 rounded-2xl p-6 text-red-800">
@@ -49,6 +79,14 @@ export default function BitacoraView({ role }) {
     )
   }
 
+  const filteredLogs = logs.filter((log) => {
+    const up = (log.accion || '').toUpperCase()
+    if (filterTipo === 'edicion') return up === 'EDICION' || up.includes('EDICION') || up.includes('ACTUALIZACION')
+    if (filterTipo === 'eliminacion') return up === 'ELIMINACION' || up.includes('ELIMINACION')
+    if (filterTipo === 'anulacion') return up.includes('ANULACION')
+    return true
+  })
+
   return (
     <div className="space-y-6">
       <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -58,7 +96,7 @@ export default function BitacoraView({ role }) {
             <h2 className="text-xl font-bold text-slate-900">Bitácora de Auditoría (Exclusivo Admin)</h2>
           </div>
           <p className="text-xs text-slate-500">
-            Registro inmutable protegido por Row Level Security (RLS). Trazabilidad total de cambios en tarifas, descargas y accesos.
+            Registro inmutable protegido por RLS. Toda edición, eliminación o anulación queda trazada con snapshot anterior, motivo y usuario.
           </p>
         </div>
 
@@ -72,34 +110,66 @@ export default function BitacoraView({ role }) {
         </button>
       </div>
 
-      {/* Tarjetas de Métricas de Seguridad */}
+      {/* Tarjetas de Métricas */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div className="p-4 rounded-xl bg-slate-50 border border-slate-200">
           <span className="flex items-center text-xs font-semibold text-slate-700 gap-1.5 mb-1">
             <Fingerprint className="w-4 h-4 text-red-500" />
-            Huella de Dispositivo & Navegador
+            Trazabilidad Total (Antes vs. Después)
           </span>
           <p className="text-xs text-slate-500">
-            Captura de huella y user agent en cada acción crítica para impedir cuentas compartidas.
+            Cada edición y eliminación guarda el registro completo previo, los cambios exactos, el motivo escrito y el dispositivo.
           </p>
         </div>
 
         <div className="p-4 rounded-xl bg-slate-50 border border-slate-200">
           <span className="flex items-center text-xs font-semibold text-slate-700 gap-1.5 mb-1">
             <AlertTriangle className="w-4 h-4 text-amber-500" />
-            Cero Borrados (Inmutabilidad)
+            Bitácora Inmutable
           </span>
           <p className="text-xs text-slate-500">
-            Ningún evento registrado en esta tabla puede ser modificado ni eliminado a nivel de base de datos.
+            Los eventos registrados en esta bitácora no pueden modificarse ni eliminarse desde la aplicación.
           </p>
         </div>
       </div>
 
-      {/* Registros de Bitácora */}
+      {/* Filtros por tipo */}
+      <div className="flex flex-wrap items-center gap-2 bg-white p-2 rounded-2xl border border-slate-200 shadow-sm w-fit text-xs font-bold">
+        <button
+          type="button"
+          onClick={() => setFilterTipo('todos')}
+          className={`px-3 py-1.5 rounded-xl ${filterTipo === 'todos' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-100'}`}
+        >
+          Todos ({logs.length})
+        </button>
+        <button
+          type="button"
+          onClick={() => setFilterTipo('edicion')}
+          className={`px-3 py-1.5 rounded-xl ${filterTipo === 'edicion' ? 'bg-blue-600 text-white' : 'text-blue-700 bg-blue-50 hover:bg-blue-100'}`}
+        >
+          Ediciones
+        </button>
+        <button
+          type="button"
+          onClick={() => setFilterTipo('eliminacion')}
+          className={`px-3 py-1.5 rounded-xl ${filterTipo === 'eliminacion' ? 'bg-red-600 text-white' : 'text-red-700 bg-red-50 hover:bg-red-100'}`}
+        >
+          Eliminaciones
+        </button>
+        <button
+          type="button"
+          onClick={() => setFilterTipo('anulacion')}
+          className={`px-3 py-1.5 rounded-xl ${filterTipo === 'anulacion' ? 'bg-orange-600 text-white' : 'text-orange-700 bg-orange-50 hover:bg-orange-100'}`}
+        >
+          Anulaciones
+        </button>
+      </div>
+
+      {/* Registros */}
       <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm">
         <div className="px-5 py-3.5 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
           <span className="text-xs font-bold uppercase tracking-wider text-slate-700">
-            Eventos de Auditoría Recientes ({logs.length})
+            Eventos de Auditoría ({filteredLogs.length})
           </span>
           <span className="text-[10px] text-slate-400">Orden cronológico inverso</span>
         </div>
@@ -109,55 +179,123 @@ export default function BitacoraView({ role }) {
             <RefreshCw className="w-5 h-5 mx-auto animate-spin mb-2 text-slate-400" />
             Cargando bitácora desde Supabase...
           </div>
-        ) : logs.length === 0 ? (
+        ) : filteredLogs.length === 0 ? (
           <div className="p-8 text-center text-slate-500 text-xs">
             <FileText className="w-8 h-8 mx-auto text-slate-300 mb-2" />
-            Aún no hay eventos registrados en la bitácora. Al guardar cambios en tarifas o anulaciones se registrarán aquí automáticamente.
+            No hay eventos que coincidan con el filtro seleccionado.
           </div>
         ) : (
           <div className="divide-y divide-slate-100">
-            {logs.map((log) => (
-              <div key={log.id} className="p-4 hover:bg-slate-50 transition-colors text-xs space-y-1.5">
-                <div className="flex items-center justify-between">
-                  <span className="font-bold font-mono px-2 py-0.5 rounded bg-slate-100 text-slate-800 border border-slate-200">
-                    {log.accion}
-                  </span>
-                  <span className="text-slate-400 text-[11px] flex items-center gap-1">
-                    <Clock className="w-3 h-3" />
-                    {new Date(log.fecha_hora).toLocaleString('es-BO', {
-                      dateStyle: 'short',
-                      timeStyle: 'medium',
-                    })}
-                  </span>
-                </div>
+            {filteredLogs.map((log) => {
+              const det = log.detalle_json || {}
+              const isExpanded = Boolean(expandedIds[log.id])
+              const hasSnapshots = Boolean(det.datos_anteriores || det.datos_nuevos)
 
-                <div className="text-slate-700">
-                  {log.detalle_json?.descripcion || JSON.stringify(log.detalle_json)}
-                </div>
-
-                {log.detalle_json?.cambios && (
-                  <div className="mt-2 bg-slate-50 p-2.5 rounded-lg border border-slate-200 space-y-1">
-                    <span className="font-semibold text-[10px] uppercase text-slate-500 block">
-                      Valores Modificados:
+              return (
+                <div key={log.id} className="p-4 hover:bg-slate-50 transition-colors text-xs space-y-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className={`font-bold font-mono px-2.5 py-0.5 rounded border ${getBadgeStyle(log.accion)}`}>
+                        {log.accion}
+                      </span>
+                      {det.modulo && (
+                        <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-700 font-semibold">
+                          {det.modulo}
+                        </span>
+                      )}
+                      {det.tabla && (
+                        <span className="text-[11px] font-mono text-slate-500">
+                          [{det.tabla}]
+                        </span>
+                      )}
+                    </div>
+                    <span className="text-slate-400 text-[11px] flex items-center gap-1">
+                      <Clock className="w-3 h-3" />
+                      {new Date(log.fecha_hora).toLocaleString('es-BO', {
+                        dateStyle: 'short',
+                        timeStyle: 'medium',
+                      })}
                     </span>
-                    {log.detalle_json.cambios.map((c, i) => (
-                      <div key={i} className="text-[11px] text-slate-600 flex items-center gap-2 font-mono">
-                        <span className="font-semibold text-slate-800">{c.campo}:</span>
-                        <span className="text-red-600 line-through">{c.valor_anterior}</span>
-                        <span>➔</span>
-                        <span className="text-emerald-700 font-bold">{c.valor_nuevo}</span>
-                      </div>
-                    ))}
                   </div>
-                )}
 
-                <div className="text-[10px] text-slate-400 flex items-center gap-3 pt-1">
-                  <span>Usuario: {log.perfiles_usuarios?.nombre || log.usuario_id || 'Sistema'}</span>
-                  <span>•</span>
-                  <span className="truncate max-w-xs">Navegador: {log.user_agent || 'N/A'}</span>
+                  <div className="text-slate-800 font-medium">
+                    {det.descripcion || JSON.stringify(det)}
+                  </div>
+
+                  {det.motivo && (
+                    <div className="p-2 bg-amber-50 border border-amber-200 rounded-lg text-[11px] text-amber-950">
+                      <strong>Motivo ingresado:</strong> {det.motivo}
+                    </div>
+                  )}
+
+                  {Array.isArray(det.cambios) && det.cambios.length > 0 && (
+                    <div className="mt-2 bg-slate-50 p-2.5 rounded-lg border border-slate-200 space-y-1">
+                      <span className="font-semibold text-[10px] uppercase text-slate-500 block">
+                        Campos Modificados:
+                      </span>
+                      {det.cambios.map((c, i) => (
+                        <div key={i} className="text-[11px] text-slate-600 flex flex-wrap items-center gap-2 font-mono">
+                          <span className="font-semibold text-slate-800">{c.campo}:</span>
+                          <span className="text-red-600 line-through">{String(c.valor_anterior ?? 'vacío')}</span>
+                          <span>➔</span>
+                          <span className="text-emerald-700 font-bold">{String(c.valor_nuevo ?? 'vacío')}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {hasSnapshots && (
+                    <div>
+                      <button
+                        type="button"
+                        onClick={() => toggleExpand(log.id)}
+                        className="text-[11px] font-bold text-indigo-600 hover:underline inline-flex items-center gap-1"
+                      >
+                        {isExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                        <span>{isExpanded ? 'Ocultar detalle JSON completo' : 'Ver snapshot completo (Antes / Después)'}</span>
+                      </button>
+
+                      {isExpanded && (
+                        <div className="mt-2 grid grid-cols-1 md:grid-cols-2 gap-2">
+                          {det.datos_anteriores && (
+                            <div className="bg-red-50/70 border border-red-200 rounded-lg p-2.5 overflow-x-auto">
+                              <span className="text-[10px] font-bold uppercase text-red-700 block mb-1">
+                                Datos Anteriores
+                              </span>
+                              <pre className="text-[10px] text-slate-800 whitespace-pre-wrap break-all">
+                                {JSON.stringify(det.datos_anteriores, null, 2)}
+                              </pre>
+                            </div>
+                          )}
+                          {det.datos_nuevos && (
+                            <div className="bg-emerald-50/70 border border-emerald-200 rounded-lg p-2.5 overflow-x-auto">
+                              <span className="text-[10px] font-bold uppercase text-emerald-700 block mb-1">
+                                Datos Nuevos
+                              </span>
+                              <pre className="text-[10px] text-slate-800 whitespace-pre-wrap break-all">
+                                {JSON.stringify(det.datos_nuevos, null, 2)}
+                              </pre>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  <div className="text-[10px] text-slate-400 flex flex-wrap items-center gap-2 pt-1">
+                    <span>Usuario: {log.perfiles_usuarios?.nombre || log.usuario_id || 'Sistema'}</span>
+                    {det.registro_id && (
+                      <>
+                        <span>•</span>
+                        <span className="font-mono">ID: {String(det.registro_id).slice(0, 8)}</span>
+                      </>
+                    )}
+                    <span>•</span>
+                    <span className="truncate max-w-xs">Navegador: {log.user_agent || 'N/A'}</span>
+                  </div>
                 </div>
-              </div>
-            ))}
+              )
+            })}
           </div>
         )}
       </div>

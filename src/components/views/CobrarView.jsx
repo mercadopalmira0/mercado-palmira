@@ -2,8 +2,9 @@ import React, { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
 import { calcularDesgloseCobro } from '../../lib/calculosCobro'
-import { registrarAuditoria } from '../../lib/auditoria'
+import { registrarAuditoria, registrarEdicionAuditoria, registrarEliminacionAuditoria } from '../../lib/auditoria'
 import { MESES, getLocalDateStr, getNombreSocioCobro, getPerdonazoVigente } from '../../lib/formatters'
+import ConfirmMotivoModal from '../modals/ConfirmMotivoModal'
 import AbrirMesModal from '../modals/AbrirMesModal'
 import CobrarModal from '../modals/CobrarModal'
 import HistorialPagosModal from '../modals/HistorialPagosModal'
@@ -25,7 +26,9 @@ import {
   Users,
   CheckCircle2,
   X,
-  ShieldAlert
+  ShieldAlert,
+  Edit2,
+  Trash2
 } from 'lucide-react'
 
 export default function CobrarView() {
@@ -58,6 +61,8 @@ export default function CobrarView() {
   const [savingExterno, setSavingExterno] = useState(false)
   const [anulandoExtId, setAnulandoExtId] = useState(null)
   const [motivoAnulExt, setMotivoAnulExt] = useState('')
+  const [editingExtCobro, setEditingExtCobro] = useState(null)
+  const [confirmExtState, setConfirmExtState] = useState({ open: false, tipo: 'edicion', target: null })
 
   // Modales socios
   const [isAbrirMesModalOpen, setIsAbrirMesModalOpen] = useState(false)
@@ -418,8 +423,9 @@ export default function CobrarView() {
     }
   }
 
-  // Cobrar a Aportante Externo (Guardia y Agua, SIN multas)
+  // Cobrar o Editar Aportante Externo (Guardia y Agua, SIN multas)
   const openCobrarExternoModal = (ext) => {
+    setEditingExtCobro(null)
     setSelectedExternoPago(ext)
     setExtMonto(String(parseFloat(ext.monto_mensual_sugerido) || 0))
     setExtMetodo('efectivo')
@@ -428,12 +434,27 @@ export default function CobrarView() {
     setExtObs('')
   }
 
+  const openEditCobroExternoModal = (ext, cobroExt) => {
+    setEditingExtCobro(cobroExt)
+    setSelectedExternoPago(ext)
+    setExtMonto(String(parseFloat(cobroExt.monto_pagado) || 0))
+    setExtMetodo(cobroExt.metodo_pago || 'efectivo')
+    setExtTalonario(cobroExt.nro_talonario_fisico || '')
+    setExtFecha(cobroExt.fecha_pago || getLocalDateStr())
+    setExtObs(cobroExt.observaciones || '')
+  }
+
   const handleSaveCobroExterno = async (e) => {
     e.preventDefault()
     if (!selectedExternoPago) return
     const montoNum = parseFloat(extMonto)
     if (!montoNum || montoNum <= 0) {
       setStatusMessage({ type: 'error', text: 'Ingresa un monto válido mayor a 0.' })
+      return
+    }
+
+    if (editingExtCobro) {
+      setConfirmExtState({ open: true, tipo: 'edicion', target: editingExtCobro })
       return
     }
 
@@ -511,6 +532,65 @@ export default function CobrarView() {
     } catch (err) {
       console.error(err)
       setStatusMessage({ type: 'error', text: 'Error al anular cobro externo: ' + err.message })
+    }
+  }
+
+  const handleConfirmExtAudit = async (motivo) => {
+    const { tipo, target } = confirmExtState
+    if (!target) return
+    setSavingExterno(true)
+    try {
+      if (tipo === 'edicion') {
+        const montoNum = parseFloat(extMonto)
+        const datosNuevos = {
+          monto_pagado: montoNum,
+          metodo_pago: extMetodo,
+          nro_talonario_fisico: extTalonario.trim() || null,
+          fecha_pago: extFecha || getLocalDateStr(),
+          observaciones: extObs.trim() || null,
+        }
+        await registrarEdicionAuditoria({
+          usuarioId: user?.id,
+          modulo: 'Cobros Externos',
+          tabla: 'cobros_externos',
+          registroId: target.id,
+          motivo,
+          resumen: `Edición de cobro externo (${selectedExternoPago?.nombre_completo || target.externo_id})`,
+          datosAnteriores: {
+            monto_pagado: target.monto_pagado,
+            metodo_pago: target.metodo_pago,
+            nro_talonario_fisico: target.nro_talonario_fisico,
+            fecha_pago: target.fecha_pago,
+            observaciones: target.observaciones,
+          },
+          datosNuevos,
+        })
+        const { error } = await supabase.from('cobros_externos').update(datosNuevos).eq('id', target.id)
+        if (error) throw error
+        setSelectedExternoPago(null)
+        setEditingExtCobro(null)
+        setStatusMessage({ type: 'success', text: 'Cobro externo editado y auditado en bitácora.' })
+      } else {
+        await registrarEliminacionAuditoria({
+          usuarioId: user?.id,
+          modulo: 'Cobros Externos',
+          tabla: 'cobros_externos',
+          registroId: target.id,
+          motivo,
+          resumen: `Eliminación de cobro externo (${target.monto_pagado} Bs)`,
+          datosAnteriores: target,
+        })
+        const { error } = await supabase.from('cobros_externos').delete().eq('id', target.id)
+        if (error) throw error
+        setStatusMessage({ type: 'success', text: 'Cobro externo eliminado y auditado en bitácora.' })
+      }
+      setConfirmExtState({ open: false, tipo: 'edicion', target: null })
+      await fetchExternosYMes()
+    } catch (err) {
+      setStatusMessage({ type: 'error', text: err.message })
+      setConfirmExtState({ open: false, tipo: 'edicion', target: null })
+    } finally {
+      setSavingExterno(false)
     }
   }
 
@@ -792,24 +872,46 @@ export default function CobrarView() {
                                 )}
                               </div>
 
-                              {p.anulado ? (
-                                <span className="text-[10px] font-bold bg-red-100 text-red-700 px-2 py-0.5 rounded">
-                                  Anulado
-                                </span>
-                              ) : (
-                                isAdmin && (
+                              <div className="flex items-center gap-1.5">
+                                {p.anulado ? (
+                                  <span className="text-[10px] font-bold bg-red-100 text-red-700 px-2 py-0.5 rounded">
+                                    Anulado
+                                  </span>
+                                ) : (
+                                  isAdmin && (
+                                    <>
+                                      <button
+                                        type="button"
+                                        onClick={() => openEditCobroExternoModal(ext, p)}
+                                        title="Editar cobro externo"
+                                        className="p-1 text-blue-600 hover:bg-blue-50 rounded"
+                                      >
+                                        <Edit2 className="w-3.5 h-3.5" />
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setAnulandoExtId(p.id)
+                                          setMotivoAnulExt('')
+                                        }}
+                                        className="text-orange-600 hover:bg-orange-50 px-2 py-0.5 rounded font-semibold"
+                                      >
+                                        Anular
+                                      </button>
+                                    </>
+                                  )
+                                )}
+                                {isAdmin && (
                                   <button
                                     type="button"
-                                    onClick={() => {
-                                      setAnulandoExtId(p.id)
-                                      setMotivoAnulExt('')
-                                    }}
-                                    className="text-red-600 hover:bg-red-50 px-2 py-0.5 rounded font-semibold"
+                                    onClick={() => setConfirmExtState({ open: true, tipo: 'eliminacion', target: p })}
+                                    title="Eliminar cobro externo"
+                                    className="p-1 text-red-600 hover:bg-red-50 rounded"
                                   >
-                                    Anular
+                                    <Trash2 className="w-3.5 h-3.5" />
                                   </button>
-                                )
-                              )}
+                                )}
+                              </div>
                             </div>
 
                             {p.anulado && p.motivo_anulacion && (
@@ -1609,6 +1711,20 @@ export default function CobrarView() {
           customName={photoModalTarget.customName}
         />
       )}
+
+      <ConfirmMotivoModal
+        isOpen={confirmExtState.open}
+        onClose={() => setConfirmExtState({ open: false, tipo: 'edicion', target: null })}
+        onConfirm={handleConfirmExtAudit}
+        tipo={confirmExtState.tipo}
+        titulo={confirmExtState.tipo === 'eliminacion' ? 'Eliminar Cobro Externo' : 'Editar Cobro Externo'}
+        descripcion={
+          confirmExtState.target
+            ? `${confirmExtState.tipo === 'eliminacion' ? 'Se eliminará' : 'Se actualizará'} el cobro externo de ${confirmExtState.target.monto_pagado} Bs y se actualizará Caja Servicios.`
+            : ''
+        }
+        loading={savingExterno}
+      />
     </div>
   )
 }

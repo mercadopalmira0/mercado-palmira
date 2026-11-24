@@ -1,13 +1,15 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
-import { registrarAuditoria } from '../../lib/auditoria'
+import { registrarAuditoria, registrarEdicionAuditoria, registrarEliminacionAuditoria } from '../../lib/auditoria'
 import TraspasoPuestoModal from '../modals/TraspasoPuestoModal'
+import ConfirmMotivoModal from '../modals/ConfirmMotivoModal'
 import {
   Users,
   Search,
   UserPlus,
   Edit2,
+  Trash2,
   Zap,
   Store,
   Layers,
@@ -38,6 +40,7 @@ export default function SociosView() {
   // Modal Socio
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [isEditing, setIsEditing] = useState(false)
+  const [editingSocioOriginal, setEditingSocioOriginal] = useState(null)
   const [editingSocioId, setEditingSocioId] = useState(null)
   const [editingUnidadId, setEditingUnidadId] = useState(null)
   const [saving, setSaving] = useState(false)
@@ -59,6 +62,7 @@ export default function SociosView() {
 
   // Modal Externo (No Socio)
   const [isExtModalOpen, setIsExtModalOpen] = useState(false)
+  const [editingExtOriginal, setEditingExtOriginal] = useState(null)
   const [editingExtId, setEditingExtId] = useState(null)
   const [extNombre, setExtNombre] = useState('')
   const [extTelefono, setExtTelefono] = useState('')
@@ -69,7 +73,16 @@ export default function SociosView() {
   const [savingExt, setSavingExt] = useState(false)
 
   // Modal Traspaso
-  const [traspasoTarget, setTraspasoTarget] = useState(null) // { socio, unidad }
+  const [traspasoTarget, setTraspasoTarget] = useState(null)
+
+  // Confirmación auditada de Edición / Eliminación
+  const [confirmState, setConfirmState] = useState({
+    open: false,
+    tipo: 'edicion',
+    entity: null, // 'socio' | 'externo'
+    target: null,
+    advertencia: '',
+  })
 
   const nombreInputRef = useRef(null)
 
@@ -123,6 +136,7 @@ export default function SociosView() {
     setCodigoTarifador('')
     setUltimaLectura(0)
     setIsEditing(false)
+    setEditingSocioOriginal(null)
     setEditingSocioId(null)
     setEditingUnidadId(null)
   }
@@ -136,6 +150,7 @@ export default function SociosView() {
   const openEditModal = (socio) => {
     resetForm()
     setIsEditing(true)
+    setEditingSocioOriginal(socio)
     setEditingSocioId(socio.id)
     setNombre(socio.nombre || '')
     setTelefono(socio.telefono || '')
@@ -172,27 +187,41 @@ export default function SociosView() {
       return
     }
 
+    if (isEditing) {
+      setConfirmState({
+        open: true,
+        tipo: 'edicion',
+        entity: 'socio',
+        target: editingSocioOriginal,
+        advertencia: '',
+      })
+      return
+    }
+
     setSaving(true)
     setStatusMessage(null)
 
     try {
-      if (isEditing) {
-        const { error: socioError } = await supabase
-          .from('socios')
-          .update({
+      const { data: newSocio, error: socioError } = await supabase
+        .from('socios')
+        .insert([
+          {
             nombre: nombre.trim(),
             telefono: telefono.trim() || null,
             fecha_pago_especial: fechaPagoEspecial || null,
             activo,
             notas: notas.trim() || null,
-          })
-          .eq('id', editingSocioId)
+          },
+        ])
+        .select()
+        .single()
 
-        if (socioError) throw socioError
+      if (socioError) throw socioError
 
-        if (hasUnidad) {
-          const unidadData = {
-            socio_responsable_id: editingSocioId,
+      if (hasUnidad && newSocio) {
+        const { error: unidadError } = await supabase.from('unidades_cobro').insert([
+          {
+            socio_responsable_id: newSocio.id,
             numero_identificador: numeroIdentificador.trim(),
             nombres_titulares: nombresTitulares.trim() || null,
             tipo,
@@ -201,79 +230,32 @@ export default function SociosView() {
             codigo_tarifador: tipo === 'variable' ? codigoTarifador.trim() || null : null,
             ultima_lectura: parseFloat(ultimaLectura) || 0,
             activo,
-          }
+          },
+        ])
+        if (unidadError) throw unidadError
+      }
 
-          if (editingUnidadId) {
-            const { error: unidadError } = await supabase
-              .from('unidades_cobro')
-              .update(unidadData)
-              .eq('id', editingUnidadId)
-            if (unidadError) throw unidadError
-          } else {
-            const { error: unidadError } = await supabase.from('unidades_cobro').insert([unidadData])
-            if (unidadError) throw unidadError
-          }
-        }
+      setStatusMessage({
+        type: 'success',
+        text: `¡Socio "${nombre}" registrado con éxito! (Padrón oficial: ${socios.length + 1} socios)`,
+      })
 
-        setStatusMessage({ type: 'success', text: `Socio "${nombre}" actualizado correctamente.` })
-        setIsModalOpen(false)
-        await fetchAll()
+      await fetchAll()
+
+      if (continueAdding) {
+        setNombre('')
+        setTelefono('')
+        setFechaPagoEspecial('')
+        setNotas('')
+        setNumeroIdentificador('')
+        setNombresTitulares('')
+        setCodigoTarifador('')
+        setCantidadPuestos(1)
+        setUltimaLectura(0)
+        setTimeout(() => nombreInputRef.current?.focus(), 150)
       } else {
-        const { data: newSocio, error: socioError } = await supabase
-          .from('socios')
-          .insert([
-            {
-              nombre: nombre.trim(),
-              telefono: telefono.trim() || null,
-              fecha_pago_especial: fechaPagoEspecial || null,
-              activo,
-              notas: notas.trim() || null,
-            },
-          ])
-          .select()
-          .single()
-
-        if (socioError) throw socioError
-
-        if (hasUnidad && newSocio) {
-          const { error: unidadError } = await supabase.from('unidades_cobro').insert([
-            {
-              socio_responsable_id: newSocio.id,
-              numero_identificador: numeroIdentificador.trim(),
-              nombres_titulares: nombresTitulares.trim() || null,
-              tipo,
-              subtipo_fijo: tipo === 'fijo' ? subtipoFijo : null,
-              cantidad_puestos: parseInt(cantidadPuestos, 10) || 1,
-              codigo_tarifador: tipo === 'variable' ? codigoTarifador.trim() || null : null,
-              ultima_lectura: parseFloat(ultimaLectura) || 0,
-              activo,
-            },
-          ])
-          if (unidadError) throw unidadError
-        }
-
-        setStatusMessage({
-          type: 'success',
-          text: `¡Socio "${nombre}" registrado con éxito! (Padrón oficial: ${socios.length + 1} socios)`,
-        })
-
-        await fetchAll()
-
-        if (continueAdding) {
-          setNombre('')
-          setTelefono('')
-          setFechaPagoEspecial('')
-          setNotas('')
-          setNumeroIdentificador('')
-          setNombresTitulares('')
-          setCodigoTarifador('')
-          setCantidadPuestos(1)
-          setUltimaLectura(0)
-          setTimeout(() => nombreInputRef.current?.focus(), 150)
-        } else {
-          setIsModalOpen(false)
-          resetForm()
-        }
+        setIsModalOpen(false)
+        resetForm()
       }
     } catch (err) {
       console.error('Error al guardar socio:', err)
@@ -283,8 +265,73 @@ export default function SociosView() {
     }
   }
 
-  // Externos CRUD (sin borrar)
+  // Verificar dependencias antes de abrir confirmación de eliminación de socio
+  const requestDeleteSocio = async (socio) => {
+    try {
+      const unidadIds = (socio.unidades_cobro || []).map((u) => u.id)
+      let cobrosCount = 0
+      if (unidadIds.length > 0) {
+        const { count } = await supabase
+          .from('cobros_servicios')
+          .select('*', { count: 'exact', head: true })
+          .in('unidad_id', unidadIds)
+        cobrosCount = count || 0
+      }
+
+      const { count: afCount } = await supabase
+        .from('afiliaciones')
+        .select('*', { count: 'exact', head: true })
+        .eq('socio_id', socio.id)
+
+      if (cobrosCount > 0 || (afCount || 0) > 0) {
+        setStatusMessage({
+          type: 'error',
+          text: `No se puede eliminar a "${socio.nombre}" porque tiene ${cobrosCount} cobro(s) de servicios y ${afCount || 0} plan(es) de afiliación asociados. Desactívalo editándolo o elimina primero esos cobros/planes si fueron un error.`,
+        })
+        return
+      }
+
+      setConfirmState({
+        open: true,
+        tipo: 'eliminacion',
+        entity: 'socio',
+        target: socio,
+        advertencia:
+          (socio.unidades_cobro || []).length > 0
+            ? `Se eliminará también su unidad de cobro (${socio.unidades_cobro.map((u) => u.numero_identificador).join(', ')}).`
+            : '',
+      })
+    } catch (err) {
+      setStatusMessage({ type: 'error', text: 'Error al verificar dependencias del socio: ' + err.message })
+    }
+  }
+
+  // Verificar dependencias de externo antes de eliminar
+  const requestDeleteExterno = async (ext) => {
+    try {
+      const { count } = await supabase
+        .from('cobros_externos')
+        .select('*', { count: 'exact', head: true })
+        .eq('externo_id', ext.id)
+
+      setConfirmState({
+        open: true,
+        tipo: 'eliminacion',
+        entity: 'externo',
+        target: ext,
+        advertencia:
+          (count || 0) > 0
+            ? `¡Atención! Este aportante externo tiene ${count} cobro(s) registrado(s) que también se eliminarán por cascada y afectarán la Caja Servicios.`
+            : '',
+      })
+    } catch (err) {
+      setStatusMessage({ type: 'error', text: 'Error al verificar cobros del externo: ' + err.message })
+    }
+  }
+
+  // Externos CRUD
   const openNewExtModal = () => {
+    setEditingExtOriginal(null)
     setEditingExtId(null)
     setExtNombre('')
     setExtTelefono('')
@@ -296,6 +343,7 @@ export default function SociosView() {
   }
 
   const openEditExtModal = (ext) => {
+    setEditingExtOriginal(ext)
     setEditingExtId(ext.id)
     setExtNombre(ext.nombre_completo || '')
     setExtTelefono(ext.telefono || '')
@@ -313,6 +361,17 @@ export default function SociosView() {
       return
     }
 
+    if (editingExtId) {
+      setConfirmState({
+        open: true,
+        tipo: 'edicion',
+        entity: 'externo',
+        target: editingExtOriginal,
+        advertencia: '',
+      })
+      return
+    }
+
     setSavingExt(true)
     try {
       const payload = {
@@ -323,30 +382,193 @@ export default function SociosView() {
         activo: extActivo,
         observaciones: extObs.trim() || null,
       }
+      const { data, error } = await supabase.from('aportantes_externos').insert([payload]).select().single()
+      if (error) throw error
 
-      if (editingExtId) {
-        const { error } = await supabase.from('aportantes_externos').update(payload).eq('id', editingExtId)
-        if (error) throw error
-        setStatusMessage({ type: 'success', text: `Aportante externo "${payload.nombre_completo}" actualizado.` })
-      } else {
-        const { error } = await supabase.from('aportantes_externos').insert([payload])
-        if (error) throw error
-        await registrarAuditoria({
-          usuarioId: user?.id,
-          accion: 'ALTA_APORTANTE_EXTERNO',
-          detalleJson: {
-            descripcion: `Nuevo aportante externo: ${payload.nombre_completo} (${payload.monto_mensual_sugerido} Bs/mes)`,
-            ...payload,
-          },
-        })
-        setStatusMessage({ type: 'success', text: `Aportante externo "${payload.nombre_completo}" registrado.` })
-      }
-
+      await registrarAuditoria({
+        usuarioId: user?.id,
+        accion: 'ALTA_APORTANTE_EXTERNO',
+        detalleJson: {
+          descripcion: `Nuevo aportante externo: ${payload.nombre_completo} (${payload.monto_mensual_sugerido} Bs/mes)`,
+          tabla: 'aportantes_externos',
+          registro_id: data?.id,
+          ...payload,
+        },
+      })
+      setStatusMessage({ type: 'success', text: `Aportante externo "${payload.nombre_completo}" registrado.` })
       setIsExtModalOpen(false)
       await fetchAll()
     } catch (err) {
       setStatusMessage({ type: 'error', text: 'Error al guardar externo: ' + err.message })
     } finally {
+      setSavingExt(false)
+    }
+  }
+
+  // Ejecutar Edición o Eliminación auditada tras confirmar motivo
+  const handleConfirmAudit = async (motivo) => {
+    const { tipo: tipoOp, entity, target } = confirmState
+    if (!target) return
+
+    setSaving(true)
+    setSavingExt(true)
+    try {
+      if (entity === 'socio' && tipoOp === 'edicion') {
+        const nuevoSocio = {
+          nombre: nombre.trim(),
+          telefono: telefono.trim() || null,
+          fecha_pago_especial: fechaPagoEspecial || null,
+          activo,
+          notas: notas.trim() || null,
+        }
+        const unidadOrig = target.unidades_cobro?.[0] || null
+        const nuevaUnidad = hasUnidad
+          ? {
+              numero_identificador: numeroIdentificador.trim(),
+              nombres_titulares: nombresTitulares.trim() || null,
+              tipo,
+              subtipo_fijo: tipo === 'fijo' ? subtipoFijo : null,
+              cantidad_puestos: parseInt(cantidadPuestos, 10) || 1,
+              codigo_tarifador: tipo === 'variable' ? codigoTarifador.trim() || null : null,
+              ultima_lectura: parseFloat(ultimaLectura) || 0,
+              activo,
+            }
+          : null
+
+        await registrarEdicionAuditoria({
+          usuarioId: user?.id,
+          modulo: 'Socios y Puestos',
+          tabla: 'socios',
+          registroId: editingSocioId,
+          motivo,
+          resumen: `Edición de socio "${target.nombre}"`,
+          datosAnteriores: {
+            nombre: target.nombre,
+            telefono: target.telefono,
+            fecha_pago_especial: target.fecha_pago_especial,
+            activo: target.activo,
+            notas: target.notas,
+            puesto: unidadOrig
+              ? {
+                  numero_identificador: unidadOrig.numero_identificador,
+                  tipo: unidadOrig.tipo,
+                  subtipo_fijo: unidadOrig.subtipo_fijo,
+                  cantidad_puestos: unidadOrig.cantidad_puestos,
+                  codigo_tarifador: unidadOrig.codigo_tarifador,
+                }
+              : null,
+          },
+          datosNuevos: {
+            ...nuevoSocio,
+            puesto: nuevaUnidad
+              ? {
+                  numero_identificador: nuevaUnidad.numero_identificador,
+                  tipo: nuevaUnidad.tipo,
+                  subtipo_fijo: nuevaUnidad.subtipo_fijo,
+                  cantidad_puestos: nuevaUnidad.cantidad_puestos,
+                  codigo_tarifador: nuevaUnidad.codigo_tarifador,
+                }
+              : null,
+          },
+        })
+
+        const { error: socioError } = await supabase.from('socios').update(nuevoSocio).eq('id', editingSocioId)
+        if (socioError) throw socioError
+
+        if (hasUnidad) {
+          const unidadData = { socio_responsable_id: editingSocioId, ...nuevaUnidad }
+          if (editingUnidadId) {
+            const { error: uErr } = await supabase.from('unidades_cobro').update(unidadData).eq('id', editingUnidadId)
+            if (uErr) throw uErr
+          } else {
+            const { error: uErr } = await supabase.from('unidades_cobro').insert([unidadData])
+            if (uErr) throw uErr
+          }
+        }
+
+        setIsModalOpen(false)
+        setStatusMessage({ type: 'success', text: `Socio "${nuevoSocio.nombre}" editado y auditado en bitácora.` })
+      } else if (entity === 'socio' && tipoOp === 'eliminacion') {
+        await registrarEliminacionAuditoria({
+          usuarioId: user?.id,
+          modulo: 'Socios y Puestos',
+          tabla: 'socios',
+          registroId: target.id,
+          motivo,
+          resumen: `Eliminación de socio "${target.nombre}" y sus puestos sin cobros`,
+          datosAnteriores: target,
+        })
+
+        if ((target.unidades_cobro || []).length > 0) {
+          const { error: uDelErr } = await supabase
+            .from('unidades_cobro')
+            .delete()
+            .eq('socio_responsable_id', target.id)
+          if (uDelErr) throw uDelErr
+        }
+
+        const { error: sDelErr } = await supabase.from('socios').delete().eq('id', target.id)
+        if (sDelErr) throw sDelErr
+
+        setStatusMessage({ type: 'success', text: `Socio "${target.nombre}" eliminado y registrado en bitácora.` })
+      } else if (entity === 'externo' && tipoOp === 'edicion') {
+        const payload = {
+          nombre_completo: extNombre.trim(),
+          telefono: extTelefono.trim() || null,
+          referencia_ubicacion: extUbicacion.trim() || null,
+          monto_mensual_sugerido: parseFloat(extMontoSugerido) || 0,
+          activo: extActivo,
+          observaciones: extObs.trim() || null,
+        }
+
+        await registrarEdicionAuditoria({
+          usuarioId: user?.id,
+          modulo: 'Aportantes Externos',
+          tabla: 'aportantes_externos',
+          registroId: editingExtId,
+          motivo,
+          resumen: `Edición de aportante externo "${target.nombre_completo}"`,
+          datosAnteriores: {
+            nombre_completo: target.nombre_completo,
+            telefono: target.telefono,
+            referencia_ubicacion: target.referencia_ubicacion,
+            monto_mensual_sugerido: target.monto_mensual_sugerido,
+            activo: target.activo,
+            observaciones: target.observaciones,
+          },
+          datosNuevos: payload,
+        })
+
+        const { error } = await supabase.from('aportantes_externos').update(payload).eq('id', editingExtId)
+        if (error) throw error
+
+        setIsExtModalOpen(false)
+        setStatusMessage({ type: 'success', text: `Aportante externo "${payload.nombre_completo}" actualizado y auditado.` })
+      } else if (entity === 'externo' && tipoOp === 'eliminacion') {
+        await registrarEliminacionAuditoria({
+          usuarioId: user?.id,
+          modulo: 'Aportantes Externos',
+          tabla: 'aportantes_externos',
+          registroId: target.id,
+          motivo,
+          resumen: `Eliminación de aportante externo "${target.nombre_completo}"`,
+          datosAnteriores: target,
+        })
+
+        const { error } = await supabase.from('aportantes_externos').delete().eq('id', target.id)
+        if (error) throw error
+
+        setStatusMessage({ type: 'success', text: `Aportante externo "${target.nombre_completo}" eliminado y auditado.` })
+      }
+
+      setConfirmState({ open: false, tipo: 'edicion', entity: null, target: null, advertencia: '' })
+      await fetchAll()
+    } catch (err) {
+      console.error(err)
+      setStatusMessage({ type: 'error', text: err.message })
+      setConfirmState({ open: false, tipo: 'edicion', entity: null, target: null, advertencia: '' })
+    } finally {
+      setSaving(false)
       setSavingExt(false)
     }
   }
@@ -392,7 +614,7 @@ export default function SociosView() {
             </span>
           </div>
           <p className="text-xs text-slate-500 mt-1">
-            Puestos agrupados, aportantes externos (Guardia/Agua) y transferencia de puestos con historial intacto.
+            Puestos agrupados, externos, traspasos y edición/eliminación auditada en bitácora.
           </p>
         </div>
 
@@ -489,9 +711,8 @@ export default function SociosView() {
       )}
 
       {activeTab === 'traspasos' ? (
-        /* TAB: HISTORIAL DE TRASPASOS */
         <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm">
-          <div className="px-5 py-3.5 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+          <div className="px-5 py-3.5 bg-slate-50 border-b border-slate-200">
             <span className="text-xs font-bold uppercase tracking-wider text-slate-700">
               Registro Histórico de Traspasos / Venta de Puestos ({traspasos.length})
             </span>
@@ -499,7 +720,7 @@ export default function SociosView() {
 
           {traspasos.length === 0 ? (
             <div className="p-10 text-center text-xs text-slate-500">
-              No se han registrado traspasos de puestos todavía. Usa el botón <strong>Transferir / Vender Puesto</strong> en cualquier puesto activo.
+              No se han registrado traspasos de puestos todavía.
             </div>
           ) : (
             <div className="divide-y divide-slate-100">
@@ -507,9 +728,7 @@ export default function SociosView() {
                 <div key={tr.id} className="p-4 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                   <div className="space-y-1">
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className="px-2 py-0.5 rounded bg-slate-900 text-white font-bold">
-                        {tr.puesto_referencia}
-                      </span>
+                      <span className="px-2 py-0.5 rounded bg-slate-900 text-white font-bold">{tr.puesto_referencia}</span>
                       <span className="font-bold text-red-700">{tr.nombre_socio_anterior}</span>
                       <span className="text-slate-400">➔</span>
                       <span className="font-bold text-emerald-700">{tr.nombre_socio_nuevo}</span>
@@ -521,7 +740,6 @@ export default function SociosView() {
                     </div>
                     {tr.observaciones && <p className="text-slate-600">{tr.observaciones}</p>}
                   </div>
-
                   <div className="flex items-center gap-3">
                     <span className="text-slate-500 font-mono">{tr.fecha_traspaso}</span>
                     {tr.documento_respaldo_url && (
@@ -542,10 +760,9 @@ export default function SociosView() {
           )}
         </div>
       ) : activeTab === 'externos' ? (
-        /* TAB: EXTERNOS (NO SOCIOS - GUARDIA Y AGUA) */
         <div className="space-y-4">
           <div className="bg-indigo-50 border border-indigo-200 rounded-2xl p-4 text-xs text-indigo-900">
-            <strong>Aportantes Externos (No Socios):</strong> Personas fuera de la asociación que aportan únicamente para Guardia y Agua con un monto individual sugerido. No alteran el conteo oficial de socios ni tienen luz o afiliación.
+            <strong>Aportantes Externos (No Socios):</strong> Personas fuera de la asociación que aportan únicamente para Guardia y Agua.
           </div>
 
           <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-sm">
@@ -585,13 +802,24 @@ export default function SociosView() {
                       )}
                     </div>
                     {isAdmin && (
-                      <button
-                        type="button"
-                        onClick={() => openEditExtModal(ext)}
-                        className="p-1.5 rounded-lg text-slate-500 hover:bg-indigo-50 hover:text-indigo-700"
-                      >
-                        <Edit2 className="w-4 h-4" />
-                      </button>
+                      <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => openEditExtModal(ext)}
+                          title="Editar externo"
+                          className="p-1.5 rounded-lg text-blue-600 hover:bg-blue-50"
+                        >
+                          <Edit2 className="w-4 h-4" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => requestDeleteExterno(ext)}
+                          title="Eliminar externo"
+                          className="p-1.5 rounded-lg text-red-600 hover:bg-red-50"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
                     )}
                   </div>
 
@@ -621,7 +849,6 @@ export default function SociosView() {
           )}
         </div>
       ) : (
-        /* TAB: PADRÓN DE SOCIOS */
         <>
           <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-sm flex flex-col sm:flex-row items-center gap-3">
             <div className="relative flex-1 w-full">
@@ -634,10 +861,7 @@ export default function SociosView() {
                 className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500 focus:bg-white focus:outline-none transition-all"
               />
               {searchTerm && (
-                <button
-                  onClick={() => setSearchTerm('')}
-                  className="absolute right-3 top-2.5 text-xs text-slate-400 hover:text-slate-600 p-1"
-                >
+                <button onClick={() => setSearchTerm('')} className="absolute right-3 top-2.5 text-slate-400 p-1">
                   <X className="w-4 h-4" />
                 </button>
               )}
@@ -647,7 +871,7 @@ export default function SociosView() {
               <button
                 onClick={() => setFilterTipo('todos')}
                 className={`px-3 py-1.5 rounded-xl transition-all ${
-                  filterTipo === 'todos' ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  filterTipo === 'todos' ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-600'
                 }`}
               >
                 Todos ({socios.length})
@@ -655,16 +879,16 @@ export default function SociosView() {
               <button
                 onClick={() => setFilterTipo('variable')}
                 className={`px-3 py-1.5 rounded-xl transition-all flex items-center gap-1 ${
-                  filterTipo === 'variable' ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  filterTipo === 'variable' ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-600'
                 }`}
               >
                 <Zap className="w-3 h-3 text-amber-400" />
-                Con Luz (Variable)
+                Con Luz
               </button>
               <button
                 onClick={() => setFilterTipo('fijo')}
                 className={`px-3 py-1.5 rounded-xl transition-all ${
-                  filterTipo === 'fijo' ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  filterTipo === 'fijo' ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600'
                 }`}
               >
                 Fijos
@@ -672,7 +896,7 @@ export default function SociosView() {
               <button
                 onClick={() => setFilterTipo('especial')}
                 className={`px-3 py-1.5 rounded-xl transition-all ${
-                  filterTipo === 'especial' ? 'bg-purple-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  filterTipo === 'especial' ? 'bg-purple-600 text-white' : 'bg-slate-100 text-slate-600'
                 }`}
               >
                 Fecha Especial
@@ -717,13 +941,22 @@ export default function SociosView() {
                           )}
                         </div>
                         {isAdmin && (
-                          <button
-                            onClick={() => openEditModal(socio)}
-                            title="Editar socio y unidad"
-                            className="p-1.5 rounded-lg text-slate-500 hover:text-emerald-700 hover:bg-emerald-50 transition-colors"
-                          >
-                            <Edit2 className="w-4 h-4" />
-                          </button>
+                          <div className="flex items-center gap-1">
+                            <button
+                              onClick={() => openEditModal(socio)}
+                              title="Editar socio y unidad"
+                              className="p-1.5 rounded-lg text-blue-600 hover:bg-blue-50 transition-colors"
+                            >
+                              <Edit2 className="w-4 h-4" />
+                            </button>
+                            <button
+                              onClick={() => requestDeleteSocio(socio)}
+                              title="Eliminar socio cargado por error"
+                              className="p-1.5 rounded-lg text-red-600 hover:bg-red-50 transition-colors"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
                         )}
                       </div>
 
@@ -818,7 +1051,7 @@ export default function SociosView() {
                 </div>
                 <div>
                   <h3 className="font-bold text-base leading-tight">
-                    {isEditing ? 'Editar Socio y Unidad de Cobro' : 'Carga Rápida de Socio'}
+                    {isEditing ? 'Editar Socio y Unidad (Auditado)' : 'Carga Rápida de Socio'}
                   </h3>
                   <p className="text-xs text-slate-400">Padrón oficial del mercado</p>
                 </div>
@@ -1042,9 +1275,9 @@ export default function SociosView() {
             <div className="bg-slate-900 px-6 py-4 text-white flex items-center justify-between">
               <div>
                 <h3 className="font-bold text-base">
-                  {editingExtId ? 'Editar Aportante Externo' : 'Registrar Aportante Externo'}
+                  {editingExtId ? 'Editar Aportante Externo (Auditado)' : 'Registrar Aportante Externo'}
                 </h3>
-                <p className="text-xs text-slate-400">Solo aporte de Guardia y Agua (sin multas ni afiliación)</p>
+                <p className="text-xs text-slate-400">Solo aporte de Guardia y Agua</p>
               </div>
               <button onClick={() => setIsExtModalOpen(false)}>
                 <X className="w-5 h-5 text-slate-400 hover:text-white" />
@@ -1061,7 +1294,6 @@ export default function SociosView() {
                   required
                   value={extNombre}
                   onChange={(e) => setExtNombre(e.target.value)}
-                  placeholder="Ej. Tienda Esquina / Sra. Carmen"
                   className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-300 rounded-xl"
                 />
               </div>
@@ -1087,7 +1319,6 @@ export default function SociosView() {
                     required
                     value={extMontoSugerido}
                     onChange={(e) => setExtMontoSugerido(e.target.value)}
-                    placeholder="Ej. 35.00"
                     className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-xl font-bold"
                   />
                 </div>
@@ -1099,7 +1330,6 @@ export default function SociosView() {
                   type="text"
                   value={extUbicacion}
                   onChange={(e) => setExtUbicacion(e.target.value)}
-                  placeholder="Ej. Acera Norte / Frente al portón"
                   className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-300 rounded-xl"
                 />
               </div>
@@ -1133,7 +1363,7 @@ export default function SociosView() {
                   disabled={savingExt}
                   className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold"
                 >
-                  {savingExt ? 'Guardando...' : 'Guardar Externo'}
+                  {savingExt ? 'Guardando...' : editingExtId ? 'Actualizar Externo' : 'Guardar Externo'}
                 </button>
               </div>
             </form>
@@ -1141,7 +1371,6 @@ export default function SociosView() {
         </div>
       )}
 
-      {/* Modal Traspaso / Venta de Puesto */}
       <TraspasoPuestoModal
         isOpen={Boolean(traspasoTarget)}
         onClose={() => setTraspasoTarget(null)}
@@ -1156,6 +1385,31 @@ export default function SociosView() {
           })
           fetchAll()
         }}
+      />
+
+      <ConfirmMotivoModal
+        isOpen={confirmState.open}
+        onClose={() => setConfirmState({ open: false, tipo: 'edicion', entity: null, target: null, advertencia: '' })}
+        onConfirm={handleConfirmAudit}
+        tipo={confirmState.tipo}
+        titulo={
+          confirmState.entity === 'socio'
+            ? confirmState.tipo === 'eliminacion'
+              ? 'Eliminar Socio y Puesto'
+              : 'Editar Datos de Socio y Puesto'
+            : confirmState.tipo === 'eliminacion'
+            ? 'Eliminar Aportante Externo'
+            : 'Editar Aportante Externo'
+        }
+        descripcion={
+          confirmState.target
+            ? `${confirmState.tipo === 'eliminacion' ? 'Se eliminará' : 'Se actualizará'} a "${
+                confirmState.target.nombre || confirmState.target.nombre_completo
+              }" registrando el snapshot completo en bitacora_auditoria.`
+            : ''
+        }
+        advertencia={confirmState.advertencia}
+        loading={saving || savingExt}
       />
     </div>
   )

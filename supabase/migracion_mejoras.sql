@@ -168,3 +168,9 @@ CREATE TABLE IF NOT EXISTS traspasos_puestos (
 ALTER TABLE cobros_servicios
   ADD COLUMN IF NOT EXISTS socio_id_historico UUID,
   ADD COLUMN IF NOT EXISTS nombre_socio_historico TEXT;
+
+-- 11. Permisos para roles Supabase
+GRANT USAGE ON SCHEMA public TO authenticated, service_role;
+GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO authenticated, service_role;
+GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO authenticated, service_role;
+

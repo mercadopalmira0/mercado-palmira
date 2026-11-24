@@ -2,21 +2,22 @@ import React, { useState, useEffect } from 'react'
 import * as XLSX from 'xlsx'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
-import { registrarAuditoria } from '../../lib/auditoria'
+import { registrarAuditoria, registrarEdicionAuditoria, registrarEliminacionAuditoria } from '../../lib/auditoria'
 import { getLocalDateStr } from '../../lib/formatters'
 import FotoUploaderModal from '../modals/FotoUploaderModal'
+import ConfirmMotivoModal from '../modals/ConfirmMotivoModal'
 import {
   Package,
   PlusCircle,
   Search,
   RefreshCw,
   Edit2,
+  Trash2,
   Camera,
   ExternalLink,
   Printer,
   Download,
   CheckCircle2,
-  AlertCircle,
   X,
   ShieldAlert,
   FileText
@@ -44,13 +45,11 @@ export default function InventarioView() {
   const [searchTerm, setSearchTerm] = useState('')
   const [filterCat, setFilterCat] = useState('todos')
   const [filterOrigen, setFilterOrigen] = useState('todos')
-  const [filterEstado, setFilterEstado] = useState('activos') // 'activos' | 'en_uso' | 'en_deposito' | 'agotado' | 'danado_baja' | 'anulados' | 'todos'
+  const [filterEstado, setFilterEstado] = useState('activos')
   const [statusMessage, setStatusMessage] = useState(null)
 
-  // Vista Acta de Entrega Imprimible
   const [showActaView, setShowActaView] = useState(false)
 
-  // Modal Crear / Editar
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [editingItem, setEditingItem] = useState(null)
   const [nombre, setNombre] = useState('')
@@ -68,9 +67,10 @@ export default function InventarioView() {
   const [isPhotoOpen, setIsPhotoOpen] = useState(false)
   const [saving, setSaving] = useState(false)
 
-  // Anular item
   const [anulandoId, setAnulandoId] = useState(null)
   const [motivoAnulacion, setMotivoAnulacion] = useState('')
+
+  const [confirmState, setConfirmState] = useState({ open: false, tipo: 'edicion', target: null })
 
   const fetchItems = async () => {
     setLoading(true)
@@ -128,6 +128,21 @@ export default function InventarioView() {
     setIsModalOpen(true)
   }
 
+  const buildPayload = () => ({
+    nombre: nombre.trim(),
+    categoria,
+    cantidad: parseFloat(cantidad) || 0,
+    unidad_medida: unidadMedida.trim() || 'unidades',
+    origen,
+    fecha_adquisicion: fechaAdq || getLocalDateStr(),
+    costo_referencial: parseFloat(costoRef) || 0,
+    responsable_ubicacion: responsable.trim() || null,
+    estado,
+    foto_url: fotoUrl || null,
+    observaciones: observaciones.trim() || null,
+    motivo_baja: estado === 'agotado' || estado === 'danado_baja' ? motivoBaja.trim() : null,
+  })
+
   const handleSaveItem = async (e) => {
     e.preventDefault()
     if (!nombre.trim()) {
@@ -142,57 +157,28 @@ export default function InventarioView() {
       return
     }
 
+    if (editingItem) {
+      setConfirmState({ open: true, tipo: 'edicion', target: editingItem })
+      return
+    }
+
     setSaving(true)
     try {
-      const payload = {
-        nombre: nombre.trim(),
-        categoria,
-        cantidad: parseFloat(cantidad) || 0,
-        unidad_medida: unidadMedida.trim() || 'unidades',
-        origen,
-        fecha_adquisicion: fechaAdq || getLocalDateStr(),
-        costo_referencial: parseFloat(costoRef) || 0,
-        responsable_ubicacion: responsable.trim() || null,
-        estado,
-        foto_url: fotoUrl || null,
-        observaciones: observaciones.trim() || null,
-        motivo_baja: estado === 'agotado' || estado === 'danado_baja' ? motivoBaja.trim() : null,
-      }
+      const payload = buildPayload()
+      const { data, error } = await supabase.from('inventario_mercado').insert([payload]).select().single()
+      if (error) throw error
 
-      if (editingItem) {
-        const { error } = await supabase
-          .from('inventario_mercado')
-          .update({ ...payload, updated_at: new Date().toISOString() })
-          .eq('id', editingItem.id)
-        if (error) throw error
-
-        const esBaja = estado === 'agotado' || estado === 'danado_baja'
-        await registrarAuditoria({
-          usuarioId: user?.id,
-          accion: esBaja ? 'BAJA_INVENTARIO' : 'ACTUALIZACION_INVENTARIO',
-          detalleJson: {
-            descripcion: `${esBaja ? 'Baja/Agotamiento' : 'Actualización'} de "${payload.nombre}" (${payload.cantidad} ${payload.unidad_medida} • ${estado})`,
-            item_id: editingItem.id,
-            ...payload,
-          },
-        })
-        setStatusMessage({ type: 'success', text: `Ítem "${payload.nombre}" actualizado correctamente.` })
-      } else {
-        const { data, error } = await supabase.from('inventario_mercado').insert([payload]).select().single()
-        if (error) throw error
-
-        await registrarAuditoria({
-          usuarioId: user?.id,
-          accion: 'ALTA_INVENTARIO',
-          detalleJson: {
-            descripcion: `Alta en inventario: "${payload.nombre}" (${payload.cantidad} ${payload.unidad_medida} • ${payload.origen})`,
-            item_id: data?.id,
-            ...payload,
-          },
-        })
-        setStatusMessage({ type: 'success', text: `Bien "${payload.nombre}" agregado al inventario.` })
-      }
-
+      await registrarAuditoria({
+        usuarioId: user?.id,
+        accion: 'ALTA_INVENTARIO',
+        detalleJson: {
+          descripcion: `Alta en inventario: "${payload.nombre}" (${payload.cantidad} ${payload.unidad_medida} • ${payload.origen})`,
+          tabla: 'inventario_mercado',
+          registro_id: data?.id,
+          ...payload,
+        },
+      })
+      setStatusMessage({ type: 'success', text: `Bien "${payload.nombre}" agregado al inventario.` })
       setIsModalOpen(false)
       await fetchItems()
     } catch (err) {
@@ -203,9 +189,77 @@ export default function InventarioView() {
     }
   }
 
+  const handleConfirmAudit = async (motivo) => {
+    const { tipo, target } = confirmState
+    if (!target) return
+
+    setSaving(true)
+    try {
+      if (tipo === 'edicion') {
+        const payload = buildPayload()
+        await registrarEdicionAuditoria({
+          usuarioId: user?.id,
+          modulo: 'Inventario del Mercado',
+          tabla: 'inventario_mercado',
+          registroId: target.id,
+          motivo,
+          resumen: `Edición de bien "${target.nombre}"`,
+          datosAnteriores: {
+            nombre: target.nombre,
+            categoria: target.categoria,
+            cantidad: target.cantidad,
+            unidad_medida: target.unidad_medida,
+            origen: target.origen,
+            fecha_adquisicion: target.fecha_adquisicion,
+            costo_referencial: target.costo_referencial,
+            responsable_ubicacion: target.responsable_ubicacion,
+            estado: target.estado,
+            foto_url: target.foto_url,
+            observaciones: target.observaciones,
+            motivo_baja: target.motivo_baja,
+          },
+          datosNuevos: payload,
+        })
+
+        const { error } = await supabase
+          .from('inventario_mercado')
+          .update({ ...payload, updated_at: new Date().toISOString() })
+          .eq('id', target.id)
+        if (error) throw error
+
+        setIsModalOpen(false)
+        setEditingItem(null)
+        setStatusMessage({ type: 'success', text: `Ítem "${payload.nombre}" actualizado y auditado en bitácora.` })
+      } else {
+        await registrarEliminacionAuditoria({
+          usuarioId: user?.id,
+          modulo: 'Inventario del Mercado',
+          tabla: 'inventario_mercado',
+          registroId: target.id,
+          motivo,
+          resumen: `Eliminación de bien "${target.nombre}" (${target.cantidad} ${target.unidad_medida})`,
+          datosAnteriores: target,
+        })
+
+        const { error } = await supabase.from('inventario_mercado').delete().eq('id', target.id)
+        if (error) throw error
+
+        setStatusMessage({ type: 'success', text: `Ítem "${target.nombre}" eliminado con auditoría en bitácora.` })
+      }
+
+      setConfirmState({ open: false, tipo: 'edicion', target: null })
+      await fetchItems()
+    } catch (err) {
+      setStatusMessage({ type: 'error', text: err.message })
+      setConfirmState({ open: false, tipo: 'edicion', target: null })
+    } finally {
+      setSaving(false)
+    }
+  }
+
   const handleAnularItem = async (id) => {
     if (!motivoAnulacion.trim()) {
-      setStatusMessage({ type: 'error', text: 'El motivo de anulación es obligatorio (regla de cero borrados).' })
+      setStatusMessage({ type: 'error', text: 'El motivo de anulación es obligatorio.' })
       return
     }
     try {
@@ -224,6 +278,8 @@ export default function InventarioView() {
         accion: 'ANULACION_INVENTARIO',
         detalleJson: {
           descripcion: `Anulación de ítem de inventario ${id}`,
+          tabla: 'inventario_mercado',
+          registro_id: id,
           motivo: motivoAnulacion.trim(),
         },
       })
@@ -237,15 +293,10 @@ export default function InventarioView() {
     }
   }
 
-  // Bienes vigentes para entregar a la próxima directiva
-  const itemsEntregables = items.filter(
-    (it) => !it.anulado && (it.estado === 'en_uso' || it.estado === 'en_deposito')
-  )
+  const itemsEntregables = items.filter((it) => !it.anulado && (it.estado === 'en_uso' || it.estado === 'en_deposito'))
   const itemsDirectivaAnterior = items.filter((it) => !it.anulado && it.origen === 'directiva_anterior')
   const itemsCompradosGestion = items.filter((it) => !it.anulado && it.origen === 'comprado_gestion')
-  const itemsBaja = items.filter(
-    (it) => !it.anulado && (it.estado === 'agotado' || it.estado === 'danado_baja')
-  )
+  const itemsBaja = items.filter((it) => !it.anulado && (it.estado === 'agotado' || it.estado === 'danado_baja'))
 
   const filteredItems = items.filter((it) => {
     const term = searchTerm.toLowerCase()
@@ -255,10 +306,8 @@ export default function InventarioView() {
       it.responsable_ubicacion?.toLowerCase().includes(term) ||
       it.observaciones?.toLowerCase().includes(term)
     if (!matchSearch) return false
-
     if (filterCat !== 'todos' && it.categoria !== filterCat) return false
     if (filterOrigen !== 'todos' && it.origen !== filterOrigen) return false
-
     if (filterEstado === 'activos') return !it.anulado
     if (filterEstado === 'anulados') return Boolean(it.anulado)
     if (filterEstado !== 'todos') return !it.anulado && it.estado === filterEstado
@@ -292,7 +341,6 @@ export default function InventarioView() {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
       <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm flex flex-col lg:flex-row lg:items-center justify-between gap-4 no-print">
         <div>
           <div className="flex items-center space-x-2">
@@ -302,34 +350,22 @@ export default function InventarioView() {
             </span>
           </div>
           <p className="text-xs text-slate-500 mt-1">
-            Control de útiles, herramientas, mobiliario e insumos heredados o comprados (informativo, no afecta cajas).
+            Control de bienes, edición/eliminación auditada y acta de entrega de directiva.
           </p>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          <button
-            onClick={fetchItems}
-            title="Recargar inventario"
-            className="p-2.5 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 transition-colors"
-          >
+          <button onClick={fetchItems} title="Recargar inventario" className="p-2.5 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50">
             <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin text-emerald-600' : ''}`} />
           </button>
 
-          <button
-            type="button"
-            onClick={() => setShowActaView(!showActaView)}
-            className="px-3.5 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold shadow-sm flex items-center gap-1.5"
-          >
+          <button type="button" onClick={() => setShowActaView(!showActaView)} className="px-3.5 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold shadow-sm flex items-center gap-1.5">
             <FileText className="w-4 h-4" />
             <span>{showActaView ? 'Volver al Listado' : 'Imprimir / Exportar Acta de Entrega'}</span>
           </button>
 
           {isAdmin && (
-            <button
-              type="button"
-              onClick={openNewModal}
-              className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-md flex items-center gap-1.5"
-            >
+            <button type="button" onClick={openNewModal} className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-md flex items-center gap-1.5">
               <PlusCircle className="w-4 h-4" />
               <span>+ Registrar Bien / Insumo</span>
             </button>
@@ -338,13 +374,7 @@ export default function InventarioView() {
       </div>
 
       {statusMessage && (
-        <div
-          className={`p-4 rounded-2xl border text-xs flex items-center justify-between no-print ${
-            statusMessage.type === 'error'
-              ? 'bg-red-50 border-red-200 text-red-800'
-              : 'bg-emerald-50 border-emerald-200 text-emerald-800'
-          }`}
-        >
+        <div className={`p-4 rounded-2xl border text-xs flex items-center justify-between no-print ${statusMessage.type === 'error' ? 'bg-red-50 border-red-200 text-red-800' : 'bg-emerald-50 border-emerald-200 text-emerald-800'}`}>
           <span>{statusMessage.text}</span>
           <button onClick={() => setStatusMessage(null)}>
             <X className="w-4 h-4" />
@@ -353,26 +383,17 @@ export default function InventarioView() {
       )}
 
       {showActaView ? (
-        /* VISTA IMPRIMIBLE / EXPORTABLE: ACTA DE ENTREGA DE INVENTARIO */
         <div className="space-y-4">
           <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-sm flex flex-wrap items-center justify-between gap-3 no-print">
             <span className="text-xs font-semibold text-slate-700">
-              Vista previa del Acta de Entrega ({itemsEntregables.length} bienes vigentes: En uso y En depósito)
+              Vista previa del Acta de Entrega ({itemsEntregables.length} bienes vigentes)
             </span>
             <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={handleExportActaExcel}
-                className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5"
-              >
+              <button type="button" onClick={handleExportActaExcel} className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5">
                 <Download className="w-4 h-4" />
                 <span>Exportar Acta Excel (.xlsx)</span>
               </button>
-              <button
-                type="button"
-                onClick={() => window.print()}
-                className="px-3.5 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold flex items-center gap-1.5"
-              >
+              <button type="button" onClick={() => window.print()} className="px-3.5 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold flex items-center gap-1.5">
                 <Printer className="w-4 h-4" />
                 <span>Imprimir / Guardar PDF</span>
               </button>
@@ -385,24 +406,16 @@ export default function InventarioView() {
                 <span className="text-xs font-bold uppercase tracking-widest text-emerald-700 block">
                   Asociación de Comerciantes Minoristas — Mercado Palmira
                 </span>
-                <h1 className="text-xl font-black text-slate-900">
-                  ACTA DE ENTREGA DE INVENTARIO Y BIENES DEL MERCADO
-                </h1>
+                <h1 className="text-xl font-black text-slate-900">ACTA DE ENTREGA DE INVENTARIO Y BIENES DEL MERCADO</h1>
               </div>
               <div className="text-xs text-slate-600 sm:text-right">
-                <p>
-                  <strong>Fecha de Emisión:</strong> {new Date().toLocaleDateString('es-BO')}
-                </p>
-                <p>
-                  <strong>Total Ítems Vigentes:</strong> {itemsEntregables.length}
-                </p>
+                <p><strong>Fecha de Emisión:</strong> {new Date().toLocaleDateString('es-BO')}</p>
+                <p><strong>Total Ítems Vigentes:</strong> {itemsEntregables.length}</p>
               </div>
             </div>
 
             {itemsEntregables.length === 0 ? (
-              <p className="text-xs text-slate-500 text-center py-8">
-                No existen ítems vigentes (En uso o En depósito) para incluir en el acta.
-              </p>
+              <p className="text-xs text-slate-500 text-center py-8">No existen ítems vigentes para incluir en el acta.</p>
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full text-xs text-left border-collapse border border-slate-300">
@@ -424,15 +437,9 @@ export default function InventarioView() {
                         <td className="p-2 border-r border-slate-300 text-center font-mono">{idx + 1}</td>
                         <td className="p-2 border-r border-slate-300 font-bold">{it.nombre}</td>
                         <td className="p-2 border-r border-slate-300">{it.categoria}</td>
-                        <td className="p-2 border-r border-slate-300 text-right font-semibold">
-                          {parseFloat(it.cantidad)} {it.unidad_medida}
-                        </td>
-                        <td className="p-2 border-r border-slate-300">
-                          {it.origen === 'directiva_anterior' ? 'Directiva anterior' : 'Comprado gestión'}
-                        </td>
-                        <td className="p-2 border-r border-slate-300">
-                          {it.estado === 'en_uso' ? 'En uso' : 'En depósito'}
-                        </td>
+                        <td className="p-2 border-r border-slate-300 text-right font-semibold">{parseFloat(it.cantidad)} {it.unidad_medida}</td>
+                        <td className="p-2 border-r border-slate-300">{it.origen === 'directiva_anterior' ? 'Directiva anterior' : 'Comprado gestión'}</td>
+                        <td className="p-2 border-r border-slate-300">{it.estado === 'en_uso' ? 'En uso' : 'En depósito'}</td>
                         <td className="p-2 border-r border-slate-300">{it.responsable_ubicacion || '-'}</td>
                         <td className="p-2">{it.observaciones || '-'}</td>
                       </tr>
@@ -442,7 +449,6 @@ export default function InventarioView() {
               </div>
             )}
 
-            {/* Firmas */}
             <div className="pt-16 pb-4 grid grid-cols-2 gap-12 text-center text-xs">
               <div className="border-t border-slate-900 pt-2">
                 <p className="font-bold text-slate-900">Secretaría de Hacienda Saliente</p>
@@ -456,44 +462,30 @@ export default function InventarioView() {
           </div>
         </div>
       ) : (
-        /* VISTA DE GESTIÓN DE INVENTARIO */
         <>
-          {/* 4 Tarjetas Resumen */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-sm">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-700 block">
-                Ítems Activos a Entregar
-              </span>
+              <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-700 block">Ítems Activos a Entregar</span>
               <p className="text-2xl font-extrabold text-emerald-700 mt-1">{itemsEntregables.length}</p>
               <span className="text-[11px] text-slate-400">En uso y en depósito</span>
             </div>
-
             <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-sm">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-blue-700 block">
-                Directiva Anterior
-              </span>
+              <span className="text-[10px] font-bold uppercase tracking-wider text-blue-700 block">Directiva Anterior</span>
               <p className="text-2xl font-extrabold text-slate-900 mt-1">{itemsDirectivaAnterior.length}</p>
               <span className="text-[11px] text-slate-400">Recibidos al asumir</span>
             </div>
-
             <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-sm">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-700 block">
-                Comprados en Gestión
-              </span>
+              <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-700 block">Comprados en Gestión</span>
               <p className="text-2xl font-extrabold text-slate-900 mt-1">{itemsCompradosGestion.length}</p>
               <span className="text-[11px] text-slate-400">Adquiridos en el periodo</span>
             </div>
-
             <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-sm">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-red-600 block">
-                Agotados / Baja
-              </span>
+              <span className="text-[10px] font-bold uppercase tracking-wider text-red-600 block">Agotados / Baja</span>
               <p className="text-2xl font-extrabold text-red-600 mt-1">{itemsBaja.length}</p>
-              <span className="text-[11px] text-slate-400">Con motivo de baja registrado</span>
+              <span className="text-[11px] text-slate-400">Con motivo de baja</span>
             </div>
           </div>
 
-          {/* Filtros */}
           <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-sm flex flex-col lg:flex-row items-center gap-3">
             <div className="relative flex-1 w-full">
               <Search className="w-4 h-4 absolute left-3.5 top-3 text-slate-400" />
@@ -507,11 +499,7 @@ export default function InventarioView() {
             </div>
 
             <div className="flex flex-wrap items-center gap-2 text-xs">
-              <select
-                value={filterCat}
-                onChange={(e) => setFilterCat(e.target.value)}
-                className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl font-semibold text-slate-700"
-              >
+              <select value={filterCat} onChange={(e) => setFilterCat(e.target.value)} className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl font-semibold text-slate-700">
                 <option value="todos">Todas Categorías</option>
                 {CATEGORIAS_INV.map((c) => (
                   <option key={c} value={c}>
@@ -520,21 +508,13 @@ export default function InventarioView() {
                 ))}
               </select>
 
-              <select
-                value={filterOrigen}
-                onChange={(e) => setFilterOrigen(e.target.value)}
-                className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl font-semibold text-slate-700"
-              >
+              <select value={filterOrigen} onChange={(e) => setFilterOrigen(e.target.value)} className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl font-semibold text-slate-700">
                 <option value="todos">Todos Orígenes</option>
                 <option value="directiva_anterior">Directiva Anterior</option>
                 <option value="comprado_gestion">Comprado en Gestión</option>
               </select>
 
-              <select
-                value={filterEstado}
-                onChange={(e) => setFilterEstado(e.target.value)}
-                className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl font-semibold text-slate-700"
-              >
+              <select value={filterEstado} onChange={(e) => setFilterEstado(e.target.value)} className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl font-semibold text-slate-700">
                 <option value="activos">Activos (No anulados)</option>
                 <option value="en_uso">En uso</option>
                 <option value="en_deposito">En depósito</option>
@@ -546,11 +526,8 @@ export default function InventarioView() {
             </div>
           </div>
 
-          {/* Listado */}
           {loading ? (
-            <div className="p-12 text-center bg-white rounded-2xl border border-slate-200 text-xs text-slate-500">
-              Cargando inventario...
-            </div>
+            <div className="p-12 text-center bg-white rounded-2xl border border-slate-200 text-xs text-slate-500">Cargando inventario...</div>
           ) : filteredItems.length === 0 ? (
             <div className="p-12 text-center bg-white rounded-2xl border border-slate-200 text-xs text-slate-500 space-y-2">
               <Package className="w-10 h-10 mx-auto text-slate-300" />
@@ -561,39 +538,35 @@ export default function InventarioView() {
               {filteredItems.map((it) => {
                 const estMeta = ESTADOS_INV.find((e) => e.value === it.estado) || ESTADOS_INV[0]
                 return (
-                  <div
-                    key={it.id}
-                    className={`bg-white rounded-2xl p-4 border shadow-sm space-y-3 flex flex-col justify-between ${
-                      it.anulado ? 'border-red-200 bg-red-50/30 opacity-80' : 'border-slate-200'
-                    }`}
-                  >
+                  <div key={it.id} className={`bg-white rounded-2xl p-4 border shadow-sm space-y-3 flex flex-col justify-between ${it.anulado ? 'border-red-200 bg-red-50/30 opacity-80' : 'border-slate-200'}`}>
                     <div className="space-y-2">
                       <div className="flex items-start justify-between gap-2">
                         <div>
-                          <h4 className={`font-bold text-sm ${it.anulado ? 'line-through text-slate-400' : 'text-slate-900'}`}>
-                            {it.nombre}
-                          </h4>
+                          <h4 className={`font-bold text-sm ${it.anulado ? 'line-through text-slate-400' : 'text-slate-900'}`}>{it.nombre}</h4>
                           <span className="text-[11px] text-slate-500">{it.categoria}</span>
                         </div>
                         <div className="flex items-center gap-1">
                           {it.anulado ? (
-                            <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-red-100 text-red-700">
-                              Anulado
-                            </span>
+                            <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-red-100 text-red-700">Anulado</span>
                           ) : (
-                            <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${estMeta.badge}`}>
-                              {estMeta.label}
-                            </span>
+                            <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${estMeta.badge}`}>{estMeta.label}</span>
                           )}
-                          {isAdmin && !it.anulado && (
-                            <button
-                              type="button"
-                              onClick={() => openEditModal(it)}
-                              className="p-1 text-slate-500 hover:bg-slate-100 rounded-lg"
-                              title="Editar cantidad / estado"
-                            >
-                              <Edit2 className="w-3.5 h-3.5" />
-                            </button>
+                          {isAdmin && (
+                            <>
+                              {!it.anulado && (
+                                <button type="button" onClick={() => openEditModal(it)} className="p-1 text-blue-600 hover:bg-blue-50 rounded-lg" title="Editar bien">
+                                  <Edit2 className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                onClick={() => setConfirmState({ open: true, tipo: 'eliminacion', target: it })}
+                                className="p-1 text-red-600 hover:bg-red-50 rounded-lg"
+                                title="Eliminar bien cargado por error"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </>
                           )}
                         </div>
                       </div>
@@ -601,15 +574,11 @@ export default function InventarioView() {
                       <div className="bg-slate-50 rounded-xl p-2.5 border border-slate-100 text-xs space-y-1">
                         <div className="flex justify-between">
                           <span className="text-slate-500">Cantidad:</span>
-                          <strong className="text-slate-900">
-                            {parseFloat(it.cantidad)} {it.unidad_medida}
-                          </strong>
+                          <strong className="text-slate-900">{parseFloat(it.cantidad)} {it.unidad_medida}</strong>
                         </div>
                         <div className="flex justify-between">
                           <span className="text-slate-500">Origen:</span>
-                          <span className="font-medium text-slate-700">
-                            {it.origen === 'directiva_anterior' ? 'Directiva anterior' : 'Comprado en gestión'}
-                          </span>
+                          <span className="font-medium text-slate-700">{it.origen === 'directiva_anterior' ? 'Directiva anterior' : 'Comprado en gestión'}</span>
                         </div>
                         <div className="flex justify-between">
                           <span className="text-slate-500">Adquisición:</span>
@@ -624,31 +593,20 @@ export default function InventarioView() {
                       </div>
 
                       {it.responsable_ubicacion && (
-                        <p className="text-xs text-slate-600">
-                          <strong>Ubicación / Resp.:</strong> {it.responsable_ubicacion}
-                        </p>
+                        <p className="text-xs text-slate-600"><strong>Ubicación / Resp.:</strong> {it.responsable_ubicacion}</p>
                       )}
                       {it.observaciones && <p className="text-[11px] text-slate-500">{it.observaciones}</p>}
                       {it.motivo_baja && (
-                        <p className="text-[11px] text-amber-800 bg-amber-50 p-2 rounded-lg">
-                          <strong>Motivo baja:</strong> {it.motivo_baja}
-                        </p>
+                        <p className="text-[11px] text-amber-800 bg-amber-50 p-2 rounded-lg"><strong>Motivo baja:</strong> {it.motivo_baja}</p>
                       )}
                       {it.anulado && it.motivo_anulacion && (
-                        <p className="text-[11px] text-red-700 bg-red-50 p-2 rounded-lg">
-                          <strong>Anulado:</strong> {it.motivo_anulacion}
-                        </p>
+                        <p className="text-[11px] text-red-700 bg-red-50 p-2 rounded-lg"><strong>Anulado:</strong> {it.motivo_anulacion}</p>
                       )}
                     </div>
 
                     <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-xs">
                       {it.foto_url ? (
-                        <a
-                          href={it.foto_url}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="text-blue-600 font-semibold inline-flex items-center gap-1 hover:underline"
-                        >
+                        <a href={it.foto_url} target="_blank" rel="noreferrer" className="text-blue-600 font-semibold inline-flex items-center gap-1 hover:underline">
                           <ExternalLink className="w-3.5 h-3.5" />
                           <span>Ver Foto</span>
                         </a>
@@ -663,7 +621,7 @@ export default function InventarioView() {
                             setAnulandoId(it.id)
                             setMotivoAnulacion('')
                           }}
-                          className="text-red-600 hover:bg-red-50 px-2 py-1 rounded-lg font-semibold text-[11px]"
+                          className="text-orange-600 hover:bg-orange-50 px-2 py-1 rounded-lg font-semibold text-[11px]"
                         >
                           Anular
                         </button>
@@ -686,11 +644,7 @@ export default function InventarioView() {
                           <button type="button" onClick={() => setAnulandoId(null)} className="text-slate-600">
                             Cancelar
                           </button>
-                          <button
-                            type="button"
-                            onClick={() => handleAnularItem(it.id)}
-                            className="px-3 py-1 bg-red-600 text-white rounded-lg font-bold"
-                          >
+                          <button type="button" onClick={() => handleAnularItem(it.id)} className="px-3 py-1 bg-red-600 text-white rounded-lg font-bold">
                             Confirmar
                           </button>
                         </div>
@@ -711,11 +665,9 @@ export default function InventarioView() {
             <div className="bg-slate-900 px-6 py-4 text-white flex items-center justify-between">
               <div>
                 <h3 className="font-bold text-base">
-                  {editingItem ? 'Actualizar Bien / Insumo' : 'Registrar Bien / Insumo'}
+                  {editingItem ? 'Actualizar Bien / Insumo (Auditado)' : 'Registrar Bien / Insumo'}
                 </h3>
-                <p className="text-xs text-slate-400">
-                  Control patrimonial (costo referencial informativo, no altera cajas)
-                </p>
+                <p className="text-xs text-slate-400">Control patrimonial (costo referencial informativo)</p>
               </div>
               <button onClick={() => setIsModalOpen(false)}>
                 <X className="w-5 h-5 text-slate-400 hover:text-white" />
@@ -725,25 +677,12 @@ export default function InventarioView() {
             <form onSubmit={handleSaveItem} className="p-6 space-y-4 max-h-[78vh] overflow-y-auto">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    Nombre del Bien / Objeto <span className="text-red-500">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    value={nombre}
-                    onChange={(e) => setNombre(e.target.value)}
-                    placeholder="Ej. Talonarios de recibo, Candado..."
-                    className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-300 rounded-xl"
-                  />
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">Nombre del Bien / Objeto *</label>
+                  <input type="text" required value={nombre} onChange={(e) => setNombre(e.target.value)} className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-300 rounded-xl" />
                 </div>
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 mb-1">Categoría</label>
-                  <select
-                    value={categoria}
-                    onChange={(e) => setCategoria(e.target.value)}
-                    className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-300 rounded-xl font-semibold"
-                  >
+                  <select value={categoria} onChange={(e) => setCategoria(e.target.value)} className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-300 rounded-xl font-semibold">
                     {CATEGORIAS_INV.map((c) => (
                       <option key={c} value={c}>
                         {c}
@@ -756,71 +695,36 @@ export default function InventarioView() {
               <div className="grid grid-cols-3 gap-3">
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 mb-1">Cantidad</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    required
-                    value={cantidad}
-                    onChange={(e) => setCantidad(e.target.value)}
-                    className="w-full px-3 py-2 text-xs bg-white border border-slate-300 rounded-xl font-bold"
-                  />
+                  <input type="number" step="0.01" min="0" required value={cantidad} onChange={(e) => setCantidad(e.target.value)} className="w-full px-3 py-2 text-xs bg-white border border-slate-300 rounded-xl font-bold" />
                 </div>
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 mb-1">Unidad Medida</label>
-                  <input
-                    type="text"
-                    value={unidadMedida}
-                    onChange={(e) => setUnidadMedida(e.target.value)}
-                    placeholder="unidades, cajas, litros"
-                    className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-300 rounded-xl"
-                  />
+                  <input type="text" value={unidadMedida} onChange={(e) => setUnidadMedida(e.target.value)} className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-300 rounded-xl" />
                 </div>
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 mb-1">Costo Ref. (Bs)</label>
-                  <input
-                    type="number"
-                    step="0.50"
-                    min="0"
-                    value={costoRef}
-                    onChange={(e) => setCostoRef(e.target.value)}
-                    className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-300 rounded-xl"
-                  />
+                  <input type="number" step="0.50" min="0" value={costoRef} onChange={(e) => setCostoRef(e.target.value)} className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-300 rounded-xl" />
                 </div>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 mb-1">Origen</label>
-                  <select
-                    value={origen}
-                    onChange={(e) => setOrigen(e.target.value)}
-                    className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-300 rounded-xl font-semibold"
-                  >
+                  <select value={origen} onChange={(e) => setOrigen(e.target.value)} className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-300 rounded-xl font-semibold">
                     <option value="comprado_gestion">Comprado en esta gestión</option>
                     <option value="directiva_anterior">Recibido de directiva anterior</option>
                   </select>
                 </div>
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 mb-1">Fecha Adquisición</label>
-                  <input
-                    type="date"
-                    required
-                    value={fechaAdq}
-                    onChange={(e) => setFechaAdq(e.target.value)}
-                    className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-300 rounded-xl"
-                  />
+                  <input type="date" required value={fechaAdq} onChange={(e) => setFechaAdq(e.target.value)} className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-300 rounded-xl" />
                 </div>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 mb-1">Estado</label>
-                  <select
-                    value={estado}
-                    onChange={(e) => setEstado(e.target.value)}
-                    className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-300 rounded-xl font-semibold"
-                  >
+                  <select value={estado} onChange={(e) => setEstado(e.target.value)} className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-300 rounded-xl font-semibold">
                     {ESTADOS_INV.map((st) => (
                       <option key={st.value} value={st.value}>
                         {st.label}
@@ -830,40 +734,20 @@ export default function InventarioView() {
                 </div>
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 mb-1">Responsable / Ubicación</label>
-                  <input
-                    type="text"
-                    value={responsable}
-                    onChange={(e) => setResponsable(e.target.value)}
-                    placeholder="Ej. Caseta Guardia / Oficina"
-                    className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-300 rounded-xl"
-                  />
+                  <input type="text" value={responsable} onChange={(e) => setResponsable(e.target.value)} className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-300 rounded-xl" />
                 </div>
               </div>
 
               {(estado === 'agotado' || estado === 'danado_baja') && (
                 <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl">
-                  <label className="block text-xs font-bold text-amber-900 mb-1">
-                    Motivo de Baja / Agotamiento <span className="text-red-500">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    value={motivoBaja}
-                    onChange={(e) => setMotivoBaja(e.target.value)}
-                    placeholder="Ej. Se consumió completo en fumigación / Se rompió..."
-                    className="w-full px-3 py-1.5 text-xs bg-white border border-slate-300 rounded-lg"
-                  />
+                  <label className="block text-xs font-bold text-amber-900 mb-1">Motivo de Baja / Agotamiento *</label>
+                  <input type="text" required value={motivoBaja} onChange={(e) => setMotivoBaja(e.target.value)} className="w-full px-3 py-1.5 text-xs bg-white border border-slate-300 rounded-lg" />
                 </div>
               )}
 
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">Observaciones</label>
-                <textarea
-                  rows={2}
-                  value={observaciones}
-                  onChange={(e) => setObservaciones(e.target.value)}
-                  className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-300 rounded-xl"
-                />
+                <textarea rows={2} value={observaciones} onChange={(e) => setObservaciones(e.target.value)} className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-300 rounded-xl" />
               </div>
 
               <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-xs">
@@ -874,11 +758,7 @@ export default function InventarioView() {
                       Ver
                     </a>
                   )}
-                  <button
-                    type="button"
-                    onClick={() => setIsPhotoOpen(true)}
-                    className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 rounded-xl font-semibold text-slate-700 flex items-center gap-1"
-                  >
+                  <button type="button" onClick={() => setIsPhotoOpen(true)} className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 rounded-xl font-semibold text-slate-700 flex items-center gap-1">
                     <Camera className="w-3.5 h-3.5" />
                     <span>{fotoUrl ? 'Cambiar Foto' : 'Subir Foto'}</span>
                   </button>
@@ -889,11 +769,7 @@ export default function InventarioView() {
                 <button type="button" onClick={() => setIsModalOpen(false)} className="px-4 py-2 text-xs text-slate-600">
                   Cancelar
                 </button>
-                <button
-                  type="submit"
-                  disabled={saving}
-                  className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center gap-1"
-                >
+                <button type="submit" disabled={saving} className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center gap-1">
                   <CheckCircle2 className="w-4 h-4" />
                   <span>{saving ? 'Guardando...' : editingItem ? 'Guardar Cambios' : 'Registrar Ítem'}</span>
                 </button>
@@ -914,6 +790,20 @@ export default function InventarioView() {
           />
         </div>
       )}
+
+      <ConfirmMotivoModal
+        isOpen={confirmState.open}
+        onClose={() => setConfirmState({ open: false, tipo: 'edicion', target: null })}
+        onConfirm={handleConfirmAudit}
+        tipo={confirmState.tipo}
+        titulo={confirmState.tipo === 'eliminacion' ? 'Eliminar Ítem de Inventario' : 'Editar Ítem de Inventario'}
+        descripcion={
+          confirmState.target
+            ? `${confirmState.tipo === 'eliminacion' ? 'Se eliminará' : 'Se actualizará'} "${confirmState.target.nombre}" guardando el snapshot completo en bitacora_auditoria.`
+            : ''
+        }
+        loading={saving}
+      />
     </div>
   )
 }
