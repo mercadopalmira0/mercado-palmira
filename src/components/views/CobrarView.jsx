@@ -1818,7 +1818,8 @@ export default function CobrarView() {
                     <label className="block text-[11px] font-semibold text-indigo-900 mb-1">Guardia (Bs)</label>
                     <input
                       type="number"
-                      step="0.50"
+                      inputMode="decimal"
+                      step="0.01"
                       min="0"
                       required
                       value={extGuardia}
@@ -1830,7 +1831,8 @@ export default function CobrarView() {
                     <label className="block text-[11px] font-semibold text-indigo-900 mb-1">Agua (Bs)</label>
                     <input
                       type="number"
-                      step="0.50"
+                      inputMode="decimal"
+                      step="0.01"
                       min="0"
                       required
                       value={extAgua}

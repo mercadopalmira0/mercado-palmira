@@ -695,7 +695,7 @@ export default function InventarioView() {
               <div className="grid grid-cols-3 gap-3">
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 mb-1">Cantidad</label>
-                  <input type="number" step="0.01" min="0" required value={cantidad} onChange={(e) => setCantidad(e.target.value)} className="w-full px-3 py-2 text-xs bg-white border border-slate-300 rounded-xl font-bold" />
+                  <input type="number" inputMode="decimal" step="0.01" min="0" required value={cantidad} onChange={(e) => setCantidad(e.target.value)} className="w-full px-3 py-2 text-xs bg-white border border-slate-300 rounded-xl font-bold" />
                 </div>
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 mb-1">Unidad Medida</label>
@@ -703,7 +703,7 @@ export default function InventarioView() {
                 </div>
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 mb-1">Costo Ref. (Bs)</label>
-                  <input type="number" step="0.50" min="0" value={costoRef} onChange={(e) => setCostoRef(e.target.value)} className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-300 rounded-xl" />
+                  <input type="number" inputMode="decimal" step="0.01" min="0" value={costoRef} onChange={(e) => setCostoRef(e.target.value)} className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-300 rounded-xl" />
                 </div>
               </div>
 

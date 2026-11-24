@@ -98,7 +98,9 @@ export default function EgresosView() {
 
   // Modal Cargar / Editar Factura de Agua (Pendiente de pago)
   const [isCargaAguaOpen, setIsCargaAguaOpen] = useState(false)
-  const [montoFacturaAguaInput, setMontoFacturaAguaInput] = useState('')
+  const [aguaPotableInput, setAguaPotableInput] = useState('')
+  const [aguaAlcantarilladoInput, setAguaAlcantarilladoInput] = useState('')
+  const [aguaAporteSocioInput, setAguaAporteSocioInput] = useState('')
   const [fotoFacturaAguaInput, setFotoFacturaAguaInput] = useState('')
   const [isPhotoFacturaAguaOpen, setIsPhotoFacturaAguaOpen] = useState(false)
   const [savingCargaAgua, setSavingCargaAgua] = useState(false)
@@ -760,30 +762,56 @@ export default function EgresosView() {
   }
 
   const openCargaAguaModal = () => {
-    setMontoFacturaAguaInput(
-      periodoFijo?.factura_agua_bs && parseFloat(periodoFijo.factura_agua_bs) > 0
-        ? String(periodoFijo.factura_agua_bs)
-        : ''
-    )
+    const pPot = parseFloat(periodoFijo?.factura_agua_potable_bs) || 0
+    const pAlc = parseFloat(periodoFijo?.factura_alcantarillado_bs) || 0
+    const pApo = parseFloat(periodoFijo?.factura_agua_aporte_socio_bs) || 0
+    const totalLegacy = parseFloat(periodoFijo?.factura_agua_bs) || 0
+    const hasDesglose = pPot > 0 || pAlc > 0 || pApo > 0
+
+    if (hasDesglose) {
+      setAguaPotableInput(String(pPot))
+      setAguaAlcantarilladoInput(String(pAlc))
+      setAguaAporteSocioInput(String(pApo))
+    } else if (totalLegacy > 0) {
+      setAguaPotableInput(String(totalLegacy))
+      setAguaAlcantarilladoInput('0')
+      setAguaAporteSocioInput('0')
+    } else {
+      setAguaPotableInput('')
+      setAguaAlcantarilladoInput('0')
+      setAguaAporteSocioInput('0')
+    }
+
     setFotoFacturaAguaInput(periodoFijo?.foto_factura_agua || '')
     setIsCargaAguaOpen(true)
   }
 
+  const potableNum = Math.round((parseFloat(aguaPotableInput) || 0) * 100) / 100
+  const alcantarilladoNum = Math.round((parseFloat(aguaAlcantarilladoInput) || 0) * 100) / 100
+  const aporteSocioNum = Math.round((parseFloat(aguaAporteSocioInput) || 0) * 100) / 100
+  const totalFacturaAguaModal = Math.round((potableNum + alcantarilladoNum + aporteSocioNum) * 100) / 100
+
   const handleSaveCargaAgua = async (e) => {
     e.preventDefault()
-    const montoNum = parseFloat(montoFacturaAguaInput) || 0
-    if (montoNum <= 0) {
-      setStatusMessage({ type: 'error', text: 'Ingresa un monto válido mayor a 0 para la factura de agua.' })
+    if (totalFacturaAguaModal <= 0) {
+      setStatusMessage({ type: 'error', text: 'El total de la factura de agua debe ser mayor a 0.' })
       return
     }
     setSavingCargaAgua(true)
     try {
+      const aguaFields = {
+        factura_agua_potable_bs: potableNum,
+        factura_alcantarillado_bs: alcantarilladoNum,
+        factura_agua_aporte_socio_bs: aporteSocioNum,
+        factura_agua_bs: totalFacturaAguaModal,
+        foto_factura_agua: fotoFacturaAguaInput || null,
+      }
+
       if (periodoFijo?.id) {
         const { error } = await supabase
           .from('periodos_mensuales')
           .update({
-            factura_agua_bs: montoNum,
-            foto_factura_agua: fotoFacturaAguaInput || null,
+            ...aguaFields,
             estado_pago_agua: periodoFijo.estado_pago_agua || 'pendiente_pago',
           })
           .eq('id', periodoFijo.id)
@@ -793,10 +821,9 @@ export default function EgresosView() {
           usuarioId: user?.id,
           accion: 'CARGA_FACTURA_AGUA',
           detalleJson: {
-            descripcion: `Factura de Agua ${MESES[guardiaMes]} ${guardiaAnio}: ${montoNum.toFixed(2)} Bs (pendiente_pago)`,
+            descripcion: `Factura de Agua ${MESES[guardiaMes]} ${guardiaAnio}: ${totalFacturaAguaModal.toFixed(2)} Bs (Potable ${potableNum.toFixed(2)} + Alcantarillado ${alcantarilladoNum.toFixed(2)} + Aporte ${aporteSocioNum.toFixed(2)})`,
             periodo_id: periodoFijo.id,
-            factura_agua_bs: montoNum,
-            foto_factura_agua: fotoFacturaAguaInput || null,
+            ...aguaFields,
           },
         })
       } else {
@@ -809,8 +836,7 @@ export default function EgresosView() {
               factura_luz_bs: 0,
               factura_luz_kwh: 0,
               precio_kwh_calculado: 0,
-              factura_agua_bs: montoNum,
-              foto_factura_agua: fotoFacturaAguaInput || null,
+              ...aguaFields,
               estado_pago_agua: 'pendiente_pago',
             },
           ])
@@ -822,17 +848,16 @@ export default function EgresosView() {
           usuarioId: user?.id,
           accion: 'CARGA_FACTURA_AGUA',
           detalleJson: {
-            descripcion: `Factura de Agua ${MESES[guardiaMes]} ${guardiaAnio}: ${montoNum.toFixed(2)} Bs (pendiente_pago)`,
+            descripcion: `Factura de Agua ${MESES[guardiaMes]} ${guardiaAnio}: ${totalFacturaAguaModal.toFixed(2)} Bs (Potable ${potableNum.toFixed(2)} + Alcantarillado ${alcantarilladoNum.toFixed(2)} + Aporte ${aporteSocioNum.toFixed(2)})`,
             periodo_id: createdP?.id,
-            factura_agua_bs: montoNum,
-            foto_factura_agua: fotoFacturaAguaInput || null,
+            ...aguaFields,
           },
         })
       }
 
       setStatusMessage({
         type: 'success',
-        text: `Factura de agua (${montoNum.toFixed(2)} Bs) cargada como Pendiente de Pago (sin descontar caja todavía).`,
+        text: `Factura de agua (${totalFacturaAguaModal.toFixed(2)} Bs) cargada como Pendiente de Pago (sin descontar caja todavía).`,
       })
       setIsCargaAguaOpen(false)
       await fetchGuardiaData()
@@ -854,7 +879,7 @@ export default function EgresosView() {
   const handleConfirmarPagoAgua = async (e) => {
     e.preventDefault()
     if (!periodoFijo) return
-    const montoAgua = parseFloat(periodoFijo.factura_agua_bs) || 0
+    const montoAgua = Math.round((parseFloat(periodoFijo.factura_agua_bs) || 0) * 100) / 100
     if (montoAgua <= 0) {
       setStatusMessage({ type: 'error', text: 'Primero carga el monto de la factura de agua del mes.' })
       return
@@ -1042,7 +1067,8 @@ export default function EgresosView() {
               <label className="font-semibold text-slate-700">Sueldo Mensual (Bs):</label>
               <input
                 type="number"
-                step="10"
+                inputMode="decimal"
+                step="0.01"
                 min="0"
                 disabled={!isAdmin}
                 value={sueldoMensual}
@@ -1382,6 +1408,15 @@ export default function EgresosView() {
                       </p>
 
                       <div className="text-[11px] text-slate-600 space-y-0.5">
+                        {((parseFloat(periodoFijo?.factura_agua_potable_bs) || 0) > 0 ||
+                          (parseFloat(periodoFijo?.factura_alcantarillado_bs) || 0) > 0 ||
+                          (parseFloat(periodoFijo?.factura_agua_aporte_socio_bs) || 0) > 0) && (
+                          <p>
+                            Potable: {parseFloat(periodoFijo.factura_agua_potable_bs || 0).toFixed(2)} • Alcant.:{' '}
+                            {parseFloat(periodoFijo.factura_alcantarillado_bs || 0).toFixed(2)} • Aporte:{' '}
+                            {parseFloat(periodoFijo.factura_agua_aporte_socio_bs || 0).toFixed(2)}
+                          </p>
+                        )}
                         {periodoFijo?.foto_factura_agua && (
                           <a
                             href={periodoFijo.foto_factura_agua}
@@ -1793,7 +1828,7 @@ export default function EgresosView() {
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 mb-1">Monto (Bs) *</label>
-                  <input type="number" step="0.50" min="0.50" required value={monto} onChange={(e) => setMonto(e.target.value)} className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-xl font-bold" />
+                  <input type="number" inputMode="decimal" step="0.01" min="0.01" required value={monto} onChange={(e) => setMonto(e.target.value)} className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-xl font-bold" />
                 </div>
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 mb-1">Fecha</label>
@@ -1888,7 +1923,7 @@ export default function EgresosView() {
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 mb-1">Monto (Bs)</label>
-                  <input type="number" step="0.50" min="0.50" required value={gMonto} onChange={(e) => setGMonto(e.target.value)} className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-xl font-bold" />
+                  <input type="number" inputMode="decimal" step="0.01" min="0.01" required value={gMonto} onChange={(e) => setGMonto(e.target.value)} className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-xl font-bold" />
                 </div>
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 mb-1">Fecha Real</label>
@@ -2085,20 +2120,62 @@ export default function EgresosView() {
             </div>
 
             <form onSubmit={handleSaveCargaAgua} className="p-6 space-y-4">
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  Monto Factura de Agua (Bs) <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="number"
-                  step="0.50"
-                  min="0.50"
-                  required
-                  value={montoFacturaAguaInput}
-                  onChange={(e) => setMontoFacturaAguaInput(e.target.value)}
-                  placeholder="0.00"
-                  className="w-full px-3 py-2 text-base bg-white border border-slate-300 rounded-xl font-bold"
-                />
+              <div className="bg-blue-50/70 p-3.5 rounded-xl border border-blue-200 space-y-3">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-blue-900 block">
+                  Desglose de Factura de Agua (Centavos exactos)
+                </span>
+                <div className="space-y-2.5">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">
+                      Servicio de Agua Potable (Bs) <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="number"
+                      inputMode="decimal"
+                      step="0.01"
+                      min="0"
+                      required
+                      value={aguaPotableInput}
+                      onChange={(e) => setAguaPotableInput(e.target.value)}
+                      placeholder="0.00"
+                      className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-xl font-bold"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">
+                      Servicio de Alcantarillado Sanitario (Bs)
+                    </label>
+                    <input
+                      type="number"
+                      inputMode="decimal"
+                      step="0.01"
+                      min="0"
+                      value={aguaAlcantarilladoInput}
+                      onChange={(e) => setAguaAlcantarilladoInput(e.target.value)}
+                      placeholder="0.00"
+                      className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-xl font-bold"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">
+                      Aporte de Socio (Bs)
+                    </label>
+                    <input
+                      type="number"
+                      inputMode="decimal"
+                      step="0.01"
+                      min="0"
+                      value={aguaAporteSocioInput}
+                      onChange={(e) => setAguaAporteSocioInput(e.target.value)}
+                      placeholder="0.00"
+                      className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-xl font-bold"
+                    />
+                  </div>
+                </div>
+                <div className="pt-2 border-t border-blue-200 flex items-center justify-between text-xs">
+                  <span className="font-bold text-blue-950">Total Factura de Agua:</span>
+                  <span className="text-base font-extrabold text-blue-700">{totalFacturaAguaModal.toFixed(2)} Bs</span>
+                </div>
               </div>
 
               <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-xs">

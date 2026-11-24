@@ -217,7 +217,8 @@ export default function TarifasModal({ isOpen, onClose, onUpdated }) {
                 <div className="flex items-center">
                   <input
                     type="number"
-                    step="0.50"
+                    inputMode="decimal"
+                    step="0.01"
                     value={tarifaFijaAbierto}
                     onChange={(e) => setTarifaFijaAbierto(e.target.value)}
                     className="w-full px-2.5 py-1.5 text-xs bg-white border border-slate-300 rounded-lg font-bold"
@@ -231,7 +232,8 @@ export default function TarifasModal({ isOpen, onClose, onUpdated }) {
                 <div className="flex items-center">
                   <input
                     type="number"
-                    step="0.50"
+                    inputMode="decimal"
+                    step="0.01"
                     value={tarifaFijaCerrado}
                     onChange={(e) => setTarifaFijaCerrado(e.target.value)}
                     className="w-full px-2.5 py-1.5 text-xs bg-white border border-slate-300 rounded-lg font-bold"
@@ -245,7 +247,8 @@ export default function TarifasModal({ isOpen, onClose, onUpdated }) {
                 <div className="flex items-center">
                   <input
                     type="number"
-                    step="0.50"
+                    inputMode="decimal"
+                    step="0.01"
                     value={tarifaFijaAmbulante}
                     onChange={(e) => setTarifaFijaAmbulante(e.target.value)}
                     className="w-full px-2.5 py-1.5 text-xs bg-white border border-slate-300 rounded-lg font-bold"
@@ -259,7 +262,8 @@ export default function TarifasModal({ isOpen, onClose, onUpdated }) {
                 <div className="flex items-center">
                   <input
                     type="number"
-                    step="0.50"
+                    inputMode="decimal"
+                    step="0.01"
                     value={tarifaFijaNoSocio}
                     onChange={(e) => setTarifaFijaNoSocio(e.target.value)}
                     className="w-full px-2.5 py-1.5 text-xs bg-white border border-slate-300 rounded-lg font-bold"
@@ -280,7 +284,8 @@ export default function TarifasModal({ isOpen, onClose, onUpdated }) {
                 <label className="block text-xs font-semibold text-slate-700 mb-1">Base Mensual por Puesto (Bs)</label>
                 <input
                   type="number"
-                  step="0.50"
+                  inputMode="decimal"
+                  step="0.01"
                   value={baseVariablePuesto}
                   onChange={(e) => setBaseVariablePuesto(e.target.value)}
                   className="w-full px-3 py-1.5 text-sm bg-white border border-slate-300 rounded-xl font-bold"
@@ -314,7 +319,8 @@ export default function TarifasModal({ isOpen, onClose, onUpdated }) {
                 <label className="block text-[11px] font-semibold text-slate-600 mb-1">Multa Diaria (Bs)</label>
                 <input
                   type="number"
-                  step="1"
+                  inputMode="decimal"
+                  step="0.01"
                   value={multaDiaria}
                   onChange={(e) => setMultaDiaria(e.target.value)}
                   className="w-full px-2.5 py-1.5 text-xs bg-white border border-slate-300 rounded-lg font-bold"
@@ -325,7 +331,8 @@ export default function TarifasModal({ isOpen, onClose, onUpdated }) {
                 <label className="block text-[11px] font-semibold text-slate-600 mb-1">Tope Mensual (Bs)</label>
                 <input
                   type="number"
-                  step="1"
+                  inputMode="decimal"
+                  step="0.01"
                   value={multaTopeMensual}
                   onChange={(e) => setMultaTopeMensual(e.target.value)}
                   className="w-full px-2.5 py-1.5 text-xs bg-white border border-slate-300 rounded-lg font-bold"
@@ -336,7 +343,8 @@ export default function TarifasModal({ isOpen, onClose, onUpdated }) {
                 <label className="block text-[11px] font-semibold text-slate-600 mb-1">Mínimo Exento (Bs)</label>
                 <input
                   type="number"
-                  step="1"
+                  inputMode="decimal"
+                  step="0.01"
                   value={multaMinimoExento}
                   onChange={(e) => setMultaMinimoExento(e.target.value)}
                   className="w-full px-2.5 py-1.5 text-xs bg-white border border-slate-300 rounded-lg font-bold"
@@ -366,7 +374,8 @@ export default function TarifasModal({ isOpen, onClose, onUpdated }) {
                 <label className="block text-xs font-semibold text-slate-700 mb-1">Costo Total (Bs)</label>
                 <input
                   type="number"
-                  step="50"
+                  inputMode="decimal"
+                  step="0.01"
                   value={costoAfiliacion}
                   onChange={(e) => setCostoAfiliacion(e.target.value)}
                   className="w-full px-3 py-1.5 text-sm bg-white border border-slate-300 rounded-xl font-bold"
@@ -383,7 +392,8 @@ export default function TarifasModal({ isOpen, onClose, onUpdated }) {
                 <label className="block text-xs font-semibold text-slate-700 mb-1">Sueldo Mensual (Bs)</label>
                 <input
                   type="number"
-                  step="10"
+                  inputMode="decimal"
+                  step="0.01"
                   min="0"
                   value={sueldoGuardiaMensual}
                   onChange={(e) => setSueldoGuardiaMensual(e.target.value)}

@@ -341,8 +341,9 @@ export default function HistorialPagosModal({
                         <div className="grid grid-cols-3 gap-2">
                           <input
                             type="number"
-                            step="0.50"
-                            min="0.50"
+                            inputMode="decimal"
+                            step="0.01"
+                            min="0.01"
                             value={editMonto}
                             onChange={(e) => setEditMonto(e.target.value)}
                             className="px-2 py-1 bg-white border border-slate-300 rounded-lg font-bold"

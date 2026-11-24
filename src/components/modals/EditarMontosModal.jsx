@@ -193,7 +193,8 @@ export default function EditarMontosModal({
               <label className="block text-[11px] font-semibold text-slate-700 mb-1">Guardia (Bs)</label>
               <input
                 type="number"
-                step="0.50"
+                inputMode="decimal"
+                step="0.01"
                 min="0"
                 required
                 value={guardia}
@@ -206,7 +207,8 @@ export default function EditarMontosModal({
               <label className="block text-[11px] font-semibold text-slate-700 mb-1">Agua (Bs)</label>
               <input
                 type="number"
-                step="0.50"
+                inputMode="decimal"
+                step="0.01"
                 min="0"
                 required
                 value={agua}
@@ -220,7 +222,8 @@ export default function EditarMontosModal({
                 <label className="block text-[11px] font-semibold text-slate-700 mb-1">Grupo Luz (Bs)</label>
                 <input
                   type="number"
-                  step="0.50"
+                  inputMode="decimal"
+                  step="0.01"
                   min="0"
                   required
                   value={luzGrupo}

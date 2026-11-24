@@ -218,6 +218,14 @@ ALTER TABLE periodos_mensuales
 ALTER TABLE egresos
   ALTER COLUMN categoria TYPE TEXT;
 
+-- ============================================================
+-- DESGLOSE DE 3 RUBROS EN FACTURA DE AGUA
+-- ============================================================
+ALTER TABLE periodos_mensuales
+  ADD COLUMN IF NOT EXISTS factura_agua_potable_bs NUMERIC(10,2) DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS factura_alcantarillado_bs NUMERIC(10,2) DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS factura_agua_aporte_socio_bs NUMERIC(10,2) DEFAULT 0;
+
 -- Recargar caché de Supabase
 NOTIFY pgrst, 'reload schema';
 

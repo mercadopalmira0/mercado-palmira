@@ -250,8 +250,9 @@ export default function CobrarModal({
             <div className="relative">
               <input
                 type="number"
-                step="0.50"
-                min="0.50"
+                inputMode="decimal"
+                step="0.01"
+                min="0.01"
                 required
                 value={monto}
                 onChange={(e) => setMonto(e.target.value)}

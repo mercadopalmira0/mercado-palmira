@@ -1345,7 +1345,8 @@ export default function SociosView() {
                     </label>
                     <input
                       type="number"
-                      step="0.50"
+                      inputMode="decimal"
+                      step="0.01"
                       min="0"
                       required
                       value={extGuardiaBase}
@@ -1359,7 +1360,8 @@ export default function SociosView() {
                     </label>
                     <input
                       type="number"
-                      step="0.50"
+                      inputMode="decimal"
+                      step="0.01"
                       min="0"
                       required
                       value={extAguaBase}

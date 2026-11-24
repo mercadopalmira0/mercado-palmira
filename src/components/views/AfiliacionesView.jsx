@@ -649,11 +649,11 @@ export default function AfiliacionesView() {
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 mb-1">Costo Total (Bs)</label>
-                  <input type="number" step="50" required value={montoTotal} onChange={(e) => setMontoTotal(e.target.value)} className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-xl font-bold" />
+                  <input type="number" inputMode="decimal" step="0.01" min="0.01" required value={montoTotal} onChange={(e) => setMontoTotal(e.target.value)} className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-xl font-bold" />
                 </div>
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 mb-1">Cuota Acordada (Bs/mes)</label>
-                  <input type="number" step="10" required value={cuotaAcordada} onChange={(e) => setCuotaAcordada(e.target.value)} className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-xl font-bold" />
+                  <input type="number" inputMode="decimal" step="0.01" min="0.01" required value={cuotaAcordada} onChange={(e) => setCuotaAcordada(e.target.value)} className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-xl font-bold" />
                 </div>
               </div>
 
@@ -694,7 +694,7 @@ export default function AfiliacionesView() {
             <form onSubmit={handleRegisterAbono} className="p-6 space-y-4">
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">Monto a Abonar (Bs) *</label>
-                <input type="number" step="1" min="1" required value={abonoMonto} onChange={(e) => setAbonoMonto(e.target.value)} className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-xl font-bold" />
+                <input type="number" inputMode="decimal" step="0.01" min="0.01" required value={abonoMonto} onChange={(e) => setAbonoMonto(e.target.value)} className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-xl font-bold" />
               </div>
 
               <div>

@@ -30,7 +30,7 @@ export default function AbrirMesModal({
   const energiaNum = parseFloat(facturaEnergia) || 0
   const alumbradoNum = parseFloat(facturaAlumbrado) || 0
   const basuraNum = parseFloat(facturaBasura) || 0
-  const totalFacturaBs = energiaNum + alumbradoNum + basuraNum
+  const totalFacturaBs = Math.round((energiaNum + alumbradoNum + basuraNum) * 100) / 100
   const kwhNum = parseFloat(facturaKwh) || 0
 
   // REGLA CRÍTICA: Precio por kWh = ÚNICAMENTE Consumo de Energía / Total kWh
@@ -279,6 +279,7 @@ export default function AbrirMesModal({
                 </label>
                 <input
                   type="number"
+                  inputMode="decimal"
                   step="0.01"
                   min="0"
                   required
@@ -295,6 +296,7 @@ export default function AbrirMesModal({
                 </label>
                 <input
                   type="number"
+                  inputMode="decimal"
                   step="0.01"
                   min="0"
                   value={facturaAlumbrado}
@@ -310,6 +312,7 @@ export default function AbrirMesModal({
                 </label>
                 <input
                   type="number"
+                  inputMode="decimal"
                   step="0.01"
                   min="0"
                   value={facturaBasura}
@@ -325,6 +328,7 @@ export default function AbrirMesModal({
                 </label>
                 <input
                   type="number"
+                  inputMode="decimal"
                   step="0.01"
                   min="0.01"
                   required

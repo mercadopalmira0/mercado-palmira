@@ -116,7 +116,8 @@ export default function PerdonarMultaModal({
             </label>
             <input
               type="number"
-              step="1"
+              inputMode="decimal"
+              step="0.01"
               min="0"
               max={multaBase || 70}
               required

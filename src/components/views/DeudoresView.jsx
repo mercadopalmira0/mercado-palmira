@@ -873,7 +873,7 @@ export default function DeudoresView() {
                 </div>
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 mb-1">Monto Adeudado (Bs)</label>
-                  <input type="number" step="0.50" min="0.50" required value={montoOriginal} onChange={(e) => setMontoOriginal(e.target.value)} className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-xl font-bold" />
+                  <input type="number" inputMode="decimal" step="0.01" min="0.01" required value={montoOriginal} onChange={(e) => setMontoOriginal(e.target.value)} className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-xl font-bold" />
                 </div>
               </div>
 
@@ -920,7 +920,7 @@ export default function DeudoresView() {
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 mb-1">Monto (Bs)</label>
-                  <input type="number" step="0.50" min="0.50" required value={pagoMonto} onChange={(e) => setPagoMonto(e.target.value)} className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-xl font-bold" />
+                  <input type="number" inputMode="decimal" step="0.01" min="0.01" required value={pagoMonto} onChange={(e) => setPagoMonto(e.target.value)} className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-xl font-bold" />
                 </div>
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 mb-1">Fecha de Pago</label>

@@ -326,6 +326,7 @@ export default function SaldosInicialesModal({ isOpen, onClose, onUpdated }) {
                     <label className="block text-xs font-semibold text-slate-700 mb-1">Efectivo en Mano (Bs)</label>
                     <input
                       type="number"
+                      inputMode="decimal"
                       step="0.01"
                       min="0"
                       required
@@ -338,6 +339,7 @@ export default function SaldosInicialesModal({ isOpen, onClose, onUpdated }) {
                     <label className="block text-xs font-semibold text-slate-700 mb-1">Saldo en QR / Banco (Bs)</label>
                     <input
                       type="number"
+                      inputMode="decimal"
                       step="0.01"
                       min="0"
                       required
@@ -362,6 +364,7 @@ export default function SaldosInicialesModal({ isOpen, onClose, onUpdated }) {
                     <label className="block text-xs font-semibold text-slate-700 mb-1">Efectivo en Mano (Bs)</label>
                     <input
                       type="number"
+                      inputMode="decimal"
                       step="0.01"
                       min="0"
                       required
@@ -374,6 +377,7 @@ export default function SaldosInicialesModal({ isOpen, onClose, onUpdated }) {
                     <label className="block text-xs font-semibold text-slate-700 mb-1">Saldo en QR / Banco (Bs)</label>
                     <input
                       type="number"
+                      inputMode="decimal"
                       step="0.01"
                       min="0"
                       required
