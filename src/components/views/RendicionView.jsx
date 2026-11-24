@@ -3,46 +3,26 @@ import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
 import { calcularConsolidadoRendicion } from '../../lib/calculosRendicion'
 import { descargarRendicionExcel } from '../../lib/exportExcel'
+import { registrarAuditoria } from '../../lib/auditoria'
+import { MESES, getLocalDateStr } from '../../lib/formatters'
 import {
   FileSpreadsheet,
   Printer,
   Download,
   Lock,
-  Calendar,
   RefreshCw,
-  AlertCircle,
-  CheckCircle2,
   X,
   ExternalLink,
-  ShieldCheck,
-  Coins,
-  QrCode,
   Wallet,
-  ArrowRightLeft,
-  Users
+  Users,
+  CheckCircle2,
+  ClipboardCheck
 } from 'lucide-react'
-
-const MESES = [
-  '',
-  'Enero',
-  'Febrero',
-  'Marzo',
-  'Abril',
-  'Mayo',
-  'Junio',
-  'Julio',
-  'Agosto',
-  'Septiembre',
-  'Octubre',
-  'Noviembre',
-  'Diciembre',
-]
 
 export default function RendicionView() {
   const { user, isAdmin } = useAuth()
   const today = new Date()
 
-  // Rango de meses (default: último trimestre / últimos 3 meses)
   const currentMonth = today.getMonth() + 1
   const currentYear = today.getFullYear()
 
@@ -54,19 +34,83 @@ export default function RendicionView() {
 
   const [consolidado, setConsolidado] = useState(null)
   const [periodosRango, setPeriodosRango] = useState([])
+  const [cicloAbierto, setCicloAbierto] = useState(null)
   const [loading, setLoading] = useState(true)
   const [lockingPeriod, setLockingPeriod] = useState(false)
   const [statusMessage, setStatusMessage] = useState(null)
 
-  // Cargar datos completos para la consolidación
+  // Modal de Cierre de Periodo y Traslado de Deudores
+  const [isCloseModalOpen, setIsCloseModalOpen] = useState(false)
+  const [nombreNuevoCiclo, setNombreNuevoCiclo] = useState('')
+  const [trasladarDeudas, setTrasladarDeudas] = useState(true)
+
   const loadData = async () => {
     setLoading(true)
     setStatusMessage(null)
     try {
-      // 1. Periodos Mensuales
-      const { data: periodosData } = await supabase.from('periodos_mensuales').select('*')
+      const [
+        { data: periodosData },
+        { data: ciclosData },
+        { data: saldosData },
+        { data: pagosServiciosData },
+        { data: cobrosData },
+        { data: pagosAfiliacionData },
+        { data: afiliacionesData },
+        { data: pagosDeudoresData },
+        { data: cobrosExternosData },
+        { data: unidadesData },
+        { data: egresosData },
+        { data: movimientosData },
+      ] = await Promise.all([
+        supabase.from('periodos_mensuales').select('*'),
+        supabase.from('ciclos_hacienda').select('*').order('created_at', { ascending: false }),
+        supabase.from('saldos_iniciales').select('*'),
+        supabase.from('pagos_servicios').select(`
+          id, monto, metodo_pago, nro_talonario_fisico, estado, fecha_pago,
+          cobros_servicios (
+            id, total_a_pagar, nombre_socio_historico,
+            periodos_mensuales (mes, anio),
+            unidades_cobro (
+              numero_identificador,
+              socios (nombre, telefono)
+            )
+          )
+        `),
+        supabase.from('cobros_servicios').select(`
+          id, unidad_id, total_a_pagar, monto_multa, estado, cantidad_puestos_aplicada,
+          socio_id_historico, nombre_socio_historico,
+          periodos_mensuales (mes, anio),
+          unidades_cobro (
+            id, numero_identificador, cantidad_puestos, socio_responsable_id,
+            socios (id, nombre, telefono)
+          ),
+          pagos_servicios (id, monto, estado)
+        `),
+        supabase.from('pagos_afiliacion').select(`
+          id, monto, metodo_pago, nro_talonario_fisico, estado, fecha_pago,
+          afiliaciones (
+            id, monto_total, saldo_pendiente,
+            socios (nombre, telefono)
+          )
+        `),
+        supabase.from('afiliaciones').select(`
+          id, socio_id, monto_total, cuota_acordada, saldo_pendiente, estado,
+          socios (id, nombre, telefono),
+          pagos_afiliacion (id, monto, estado)
+        `),
+        supabase.from('pagos_deudores_ciclos').select(`
+          id, monto, metodo_pago, fecha_pago, anulado, nro_talonario_fisico,
+          deudores_ciclos (caja, nombre_deudor)
+        `),
+        supabase.from('cobros_externos').select(`
+          id, anio, mes, monto_pagado, metodo_pago, nro_talonario_fisico, fecha_pago, anulado,
+          aportantes_externos (nombre_completo, referencia_ubicacion)
+        `),
+        supabase.from('unidades_cobro').select('id, socio_responsable_id, cantidad_puestos, activo'),
+        supabase.from('egresos').select('*'),
+        supabase.from('movimientos_internos').select('*'),
+      ])
 
-      // Filtrar periodos en el rango
       const periodosEnRango = (periodosData || []).filter((p) => {
         const pDate = new Date(p.anio, p.mes - 1, 1)
         const dIni = new Date(anioInicio, mesInicio - 1, 1)
@@ -75,68 +119,25 @@ export default function RendicionView() {
       })
       setPeriodosRango(periodosEnRango)
 
-      // 2. Saldos Iniciales
-      const { data: saldosData } = await supabase.from('saldos_iniciales').select('*')
+      const abierto = (ciclosData || []).find((c) => c.estado === 'abierto') || null
+      setCicloAbierto(abierto)
 
-      // 3. Pagos de Servicios (con cobros, unidades, socios y periodos)
-      const { data: pagosServiciosData } = await supabase.from('pagos_servicios').select(`
-        id, monto, metodo_pago, nro_talonario_fisico, estado, fecha_pago,
-        cobros_servicios (
-          id, total_a_pagar,
-          periodos_mensuales (mes, anio),
-          unidades_cobro (
-            numero_identificador,
-            socios (nombre, telefono)
-          )
-        )
-      `)
-
-      // 4. Cobros de Servicios (para detectar deudores)
-      const { data: cobrosData } = await supabase.from('cobros_servicios').select(`
-        id, total_a_pagar, monto_multa, estado,
-        periodos_mensuales (mes, anio),
-        unidades_cobro (
-          numero_identificador,
-          socios (nombre, telefono)
-        ),
-        pagos_servicios (id, monto, estado)
-      `)
-
-      // 5. Pagos de Afiliaciones
-      const { data: pagosAfiliacionData } = await supabase.from('pagos_afiliacion').select(`
-        id, monto, metodo_pago, nro_talonario_fisico, estado, fecha_pago,
-        afiliaciones (
-          id, monto_total, saldo_pendiente,
-          socios (nombre, telefono)
-        )
-      `)
-
-      // 6. Afiliaciones
-      const { data: afiliacionesData } = await supabase.from('afiliaciones').select(`
-        id, monto_total, cuota_acordada, saldo_pendiente, estado,
-        socios (nombre, telefono),
-        pagos_afiliacion (id, monto, estado)
-      `)
-
-      // 7. Egresos
-      const { data: egresosData } = await supabase.from('egresos').select('*')
-
-      // 8. Movimientos Internos
-      const { data: movimientosData } = await supabase.from('movimientos_internos').select('*')
-
-      // Ejecutar motor de cálculo consolidado
       const resultado = calcularConsolidadoRendicion({
         mesInicio,
         anioInicio,
         mesFin,
         anioFin,
+        ciclosHacienda: ciclosData || [],
         saldosIniciales: saldosData || [],
         pagosServicios: pagosServiciosData || [],
         pagosAfiliacion: pagosAfiliacionData || [],
+        pagosDeudoresCiclos: pagosDeudoresData || [],
+        cobrosExternos: cobrosExternosData || [],
         egresos: egresosData || [],
         movimientosInternos: movimientosData || [],
         cobrosServicios: cobrosData || [],
         afiliaciones: afiliacionesData || [],
+        unidadesCobro: unidadesData || [],
       })
 
       setConsolidado(resultado)
@@ -152,7 +153,6 @@ export default function RendicionView() {
     loadData()
   }, [mesInicio, anioInicio, mesFin, anioFin])
 
-  // Presets rápidos de rango
   const setPreset = (tipo) => {
     if (tipo === 'trimestre') {
       const startM = currentMonth >= 3 ? currentMonth - 2 : 1
@@ -174,13 +174,11 @@ export default function RendicionView() {
     }
   }
 
-  // Candado de Asamblea (Bloquear meses rendidos)
-  const handleBloquearAsamblea = async () => {
+  const openCloseCycleModal = () => {
     if (!isAdmin) {
       setStatusMessage({ type: 'error', text: 'Solo el Secretario de Hacienda (Admin) puede sellar el periodo.' })
       return
     }
-
     if (periodosRango.length === 0) {
       setStatusMessage({
         type: 'error',
@@ -188,48 +186,173 @@ export default function RendicionView() {
       })
       return
     }
+    const nextMonth = mesFin === 12 ? 1 : mesFin + 1
+    const nextYear = mesFin === 12 ? anioFin + 1 : anioFin
+    setNombreNuevoCiclo(`Ciclo desde ${MESES[nextMonth]} ${nextYear}`)
+    setTrasladarDeudas(true)
+    setIsCloseModalOpen(true)
+  }
 
-    const confirmacion = window.confirm(
-      `¿Confirmas marcar el rango ${mesInicio}/${anioInicio} a ${mesFin}/${anioFin} como "RENDIDO EN ASAMBLEA"?\nEsta acción registrará la fecha en la bitácora y congelará los meses contra ediciones accidentales.`
-    )
-    if (!confirmacion) return
+  // Sellar Rendición, cerrar ciclo actual en ciclos_hacienda, crear nuevo ciclo abierto y trasladar deudores
+  const handleConfirmarCierreAsamblea = async (e) => {
+    e.preventDefault()
+    if (!consolidado) return
 
     setLockingPeriod(true)
     try {
-      const now = new Date().toISOString()
+      const now = new Date()
+      const nowIso = now.toISOString()
       const ids = periodosRango.map((p) => p.id)
 
-      // 1. Actualizar periodos_mensuales
+      // 1. Marcar periodos_mensuales como rendidos
       const { error: pError } = await supabase
         .from('periodos_mensuales')
         .update({
           rendido_en_asamblea: true,
-          fecha_rendicion: now,
+          fecha_rendicion: nowIso,
         })
         .in('id', ids)
-
       if (pError) throw pError
 
-      // 2. Registrar en bitacora_auditoria
-      await supabase.from('bitacora_auditoria').insert([
-        {
-          usuario_id: user?.id || null,
-          accion: 'RENDICION_EN_ASAMBLEA_SELLADA',
-          detalle_json: {
-            rango: `${mesInicio}/${anioInicio} - ${mesFin}/${anioFin}`,
-            periodos_afectados: ids.length,
-            fecha_sellado: now,
-            gran_total_rendido: consolidado?.granTotalFinal || 0,
+      // 2. Determinar fecha de cierre del ciclo y fecha de inicio del nuevo ciclo
+      const endOfRangeDate = new Date(anioFin, mesFin, 0)
+      const isPastRange = endOfRangeDate < new Date(now.getFullYear(), now.getMonth(), now.getDate())
+      const fechaCierreStr = isPastRange ? getLocalDateStr(endOfRangeDate) : getLocalDateStr(now)
+      const nextDayDate = isPastRange
+        ? new Date(endOfRangeDate.getFullYear(), endOfRangeDate.getMonth(), endOfRangeDate.getDate() + 1)
+        : now
+      const fechaInicioNuevoStr = getLocalDateStr(nextDayDate)
+
+      const saldosCierre = {
+        servicios_efectivo_final: consolidado.finServiciosEf,
+        servicios_qr_final: consolidado.finServiciosQr,
+        afiliaciones_efectivo_final: consolidado.finAfiliacionesEf,
+        afiliaciones_qr_final: consolidado.finAfiliacionesQr,
+      }
+
+      const nombreCicloCerrado =
+        cicloAbierto?.nombre || `Ciclo ${MESES[mesInicio]} ${anioInicio} - ${MESES[mesFin]} ${anioFin}`
+
+      if (cicloAbierto) {
+        const { error: cErr } = await supabase
+          .from('ciclos_hacienda')
+          .update({
+            estado: 'cerrado',
+            fecha_cierre: fechaCierreStr,
+            ...saldosCierre,
+          })
+          .eq('id', cicloAbierto.id)
+        if (cErr) throw cErr
+      } else {
+        const { error: cInsErr } = await supabase.from('ciclos_hacienda').insert([
+          {
+            nombre: nombreCicloCerrado,
+            fecha_inicio: getLocalDateStr(consolidado.fechaInicio),
+            fecha_cierre: fechaCierreStr,
+            es_inicial: true,
+            estado: 'cerrado',
+            servicios_efectivo_inicial: consolidado.antServiciosEf,
+            servicios_qr_inicial: consolidado.antServiciosQr,
+            afiliaciones_efectivo_inicial: consolidado.antAfiliacionesEf,
+            afiliaciones_qr_inicial: consolidado.antAfiliacionesQr,
+            ...saldosCierre,
           },
-          device_id: window.navigator.userAgent,
-          user_agent: window.navigator.userAgent,
-          es_sospechoso: false,
+        ])
+        if (cInsErr) throw cInsErr
+      }
+
+      // 3. Crear automáticamente el NUEVO ciclo abierto con los saldos finales como saldo inicial
+      const { error: newCicloErr } = await supabase.from('ciclos_hacienda').insert([
+        {
+          nombre: nombreNuevoCiclo.trim() || `Ciclo Post-Rendición (${fechaInicioNuevoStr})`,
+          fecha_inicio: fechaInicioNuevoStr,
+          es_inicial: false,
+          estado: 'abierto',
+          servicios_efectivo_inicial: consolidado.finServiciosEf,
+          servicios_qr_inicial: consolidado.finServiciosQr,
+          afiliaciones_efectivo_inicial: consolidado.finAfiliacionesEf,
+          afiliaciones_qr_inicial: consolidado.finAfiliacionesQr,
+          observaciones: `Arrastre automático desde cierre: ${nombreCicloCerrado}`,
         },
       ])
+      if (newCicloErr) throw newCicloErr
 
+      // 4. Trasladar saldos pendientes a deudores_ciclos si el usuario lo confirmó
+      let trasladadosCount = 0
+      if (trasladarDeudas) {
+        const { data: existentes } = await supabase
+          .from('deudores_ciclos')
+          .select('nombre_deudor, detalle_deuda, ciclo_origen')
+          .eq('ciclo_origen', nombreCicloCerrado)
+
+        const existKeys = new Set(
+          (existentes || []).map((x) => `${x.nombre_deudor}|${x.detalle_deuda}|${x.ciclo_origen}`)
+        )
+
+        const deudasParaInsertar = []
+
+        for (const ds of consolidado.deudoresServicios || []) {
+          const detalle = `Servicios ${ds.periodo} (Saldo pendiente al cierre)`
+          const key = `${ds.socio}|${detalle}|${nombreCicloCerrado}`
+          if (!existKeys.has(key) && ds.saldoPendiente > 0) {
+            deudasParaInsertar.push({
+              socio_id: ds.socioId || null,
+              nombre_deudor: ds.socio,
+              puesto_referencia: ds.puesto || null,
+              caja: 'servicios',
+              origen: 'cierre_ciclo',
+              ciclo_origen: nombreCicloCerrado,
+              detalle_deuda: detalle,
+              monto_original: ds.saldoPendiente,
+              monto_pagado: 0,
+              estado: 'pendiente',
+            })
+          }
+        }
+
+        for (const da of consolidado.deudoresAfiliaciones || []) {
+          const detalle = `Afiliación (Plan ${da.totalPlan} Bs - Saldo pendiente al cierre)`
+          const key = `${da.socio}|${detalle}|${nombreCicloCerrado}`
+          if (!existKeys.has(key) && parseFloat(da.saldoPendiente) > 0) {
+            deudasParaInsertar.push({
+              socio_id: da.socioId || null,
+              nombre_deudor: da.socio,
+              puesto_referencia: 'Afiliación',
+              caja: 'afiliaciones',
+              origen: 'cierre_ciclo',
+              ciclo_origen: nombreCicloCerrado,
+              detalle_deuda: detalle,
+              monto_original: parseFloat(da.saldoPendiente),
+              monto_pagado: 0,
+              estado: 'pendiente',
+            })
+          }
+        }
+
+        if (deudasParaInsertar.length > 0) {
+          const { error: dErr } = await supabase.from('deudores_ciclos').insert(deudasParaInsertar)
+          if (dErr) throw dErr
+          trasladadosCount = deudasParaInsertar.length
+        }
+      }
+
+      // 5. Auditoría
+      await registrarAuditoria({
+        usuarioId: user?.id,
+        accion: 'RENDICION_EN_ASAMBLEA_SELLADA',
+        detalleJson: {
+          descripcion: `Rendición sellada (${mesInicio}/${anioInicio} - ${mesFin}/${anioFin}). Nuevo ciclo: ${nombreNuevoCiclo}. Deudas trasladadas: ${trasladadosCount}.`,
+          rango: `${mesInicio}/${anioInicio} - ${mesFin}/${anioFin}`,
+          periodos_afectados: ids.length,
+          saldos_cierre: saldosCierre,
+          deudores_trasladados: trasladadosCount,
+        },
+      })
+
+      setIsCloseModalOpen(false)
       setStatusMessage({
         type: 'success',
-        text: '¡Periodo marcado como "Rendido en Asamblea" con éxito! Auditoría registrada.',
+        text: `¡Periodo rendido en Asamblea! Se cerró el ciclo, se abrió "${nombreNuevoCiclo}" con los saldos exactos${trasladadosCount > 0 ? ` y se trasladaron ${trasladadosCount} deudas a Deudores` : ''}.`,
       })
       await loadData()
     } catch (err) {
@@ -240,7 +363,6 @@ export default function RendicionView() {
     }
   }
 
-  // Exportar Excel
   const handleExportExcel = () => {
     if (!consolidado) return
     descargarRendicionExcel(consolidado, {
@@ -252,17 +374,12 @@ export default function RendicionView() {
     })
   }
 
-  // Imprimir / Guardar PDF
-  const handlePrintPdf = () => {
-    window.print()
-  }
-
-  const estanTodosRendidos =
-    periodosRango.length > 0 && periodosRango.every((p) => p.rendido_en_asamblea)
+  const estanTodosRendidos = periodosRango.length > 0 && periodosRango.every((p) => p.rendido_en_asamblea)
+  const cp = consolidado?.cumplimientoPuestos || {}
 
   return (
     <div className="space-y-6">
-      {/* Barra de Control y Selector de Rango (Oculta al imprimir) */}
+      {/* Barra de Control */}
       <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm no-print space-y-4">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
@@ -280,11 +397,10 @@ export default function RendicionView() {
               )}
             </div>
             <p className="text-xs text-slate-500 mt-1">
-              Consolidador financiero por rango de meses, exportación a Excel (.xlsx) e informe imprimible para asamblea.
+              Consolidador financiero, cumplimiento de puestos, exportación Excel/PDF y cierre con arrastre de ciclo.
             </p>
           </div>
 
-          {/* Acciones principales */}
           <div className="flex flex-wrap items-center gap-2">
             <button
               onClick={loadData}
@@ -306,7 +422,7 @@ export default function RendicionView() {
 
             <button
               type="button"
-              onClick={handlePrintPdf}
+              onClick={() => window.print()}
               disabled={loading || !consolidado}
               className="px-3.5 py-2 bg-slate-900 hover:bg-slate-800 disabled:opacity-40 text-white rounded-xl text-xs font-bold shadow-sm transition-all flex items-center gap-1.5"
             >
@@ -317,18 +433,18 @@ export default function RendicionView() {
             {isAdmin && !estanTodosRendidos && (
               <button
                 type="button"
-                onClick={handleBloquearAsamblea}
+                onClick={openCloseCycleModal}
                 disabled={lockingPeriod || loading || periodosRango.length === 0}
                 className="px-3.5 py-2 bg-amber-600 hover:bg-amber-700 disabled:opacity-40 text-white rounded-xl text-xs font-bold shadow-sm transition-all flex items-center gap-1.5"
               >
                 <Lock className="w-4 h-4" />
-                <span>{lockingPeriod ? 'Sellando...' : 'Sellar en Asamblea'}</span>
+                <span>Marcar Periodo como Rendido en Asamblea</span>
               </button>
             )}
           </div>
         </div>
 
-        {/* Selector de Fechas y Presets */}
+        {/* Selector de Fechas */}
         <div className="pt-3 border-t border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
           <div className="flex flex-wrap items-center gap-2">
             <span className="font-semibold text-slate-600">Rango desde:</span>
@@ -349,7 +465,7 @@ export default function RendicionView() {
                 onChange={(e) => setAnioInicio(parseInt(e.target.value, 10))}
                 className="bg-transparent font-bold text-slate-800 pl-1 border-l border-slate-200 focus:outline-none"
               >
-                {[2024, 2025, 2026, 2027].map((y) => (
+                {[2024, 2025, 2026, 2027, 2028].map((y) => (
                   <option key={y} value={y}>
                     {y}
                   </option>
@@ -375,7 +491,7 @@ export default function RendicionView() {
                 onChange={(e) => setAnioFin(parseInt(e.target.value, 10))}
                 className="bg-transparent font-bold text-slate-800 pl-1 border-l border-slate-200 focus:outline-none"
               >
-                {[2024, 2025, 2026, 2027].map((y) => (
+                {[2024, 2025, 2026, 2027, 2028].map((y) => (
                   <option key={y} value={y}>
                     {y}
                   </option>
@@ -384,28 +500,15 @@ export default function RendicionView() {
             </div>
           </div>
 
-          {/* Botones Presets */}
           <div className="flex items-center space-x-1.5 font-medium">
             <span className="text-slate-400">Presets:</span>
-            <button
-              type="button"
-              onClick={() => setPreset('trimestre')}
-              className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 rounded-lg text-slate-700"
-            >
+            <button type="button" onClick={() => setPreset('trimestre')} className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 rounded-lg text-slate-700">
               Trimestre
             </button>
-            <button
-              type="button"
-              onClick={() => setPreset('cuatrimestre')}
-              className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 rounded-lg text-slate-700"
-            >
+            <button type="button" onClick={() => setPreset('cuatrimestre')} className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 rounded-lg text-slate-700">
               Cuatrimestre
             </button>
-            <button
-              type="button"
-              onClick={() => setPreset('anio')}
-              className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 rounded-lg text-slate-700"
-            >
+            <button type="button" onClick={() => setPreset('anio')} className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 rounded-lg text-slate-700">
               Año Completo
             </button>
           </div>
@@ -427,7 +530,7 @@ export default function RendicionView() {
         </div>
       )}
 
-      {/* REPORTE OFICIAL IMPRIMIBLE (Se imprime exactamente esto) */}
+      {/* REPORTE OFICIAL IMPRIMIBLE */}
       {loading ? (
         <div className="p-12 text-center bg-white rounded-2xl border border-slate-200">
           <RefreshCw className="w-8 h-8 mx-auto animate-spin text-emerald-600 mb-2" />
@@ -439,7 +542,7 @@ export default function RendicionView() {
         </div>
       ) : (
         <div className="bg-white rounded-2xl p-6 md:p-8 border border-slate-200 shadow-sm print-container space-y-6">
-          {/* Encabezado Oficial del Informe */}
+          {/* Encabezado Oficial */}
           <div className="border-b-2 border-slate-900 pb-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div>
               <span className="text-xs font-bold uppercase tracking-widest text-emerald-700 block">
@@ -512,7 +615,7 @@ export default function RendicionView() {
                     <td className="p-1.5 text-right">{(consolidado.antServiciosQr + consolidado.antAfiliacionesQr).toFixed(2)}</td>
                   </tr>
 
-                  {/* Ingresos Rango */}
+                  {/* Ingresos */}
                   <tr className="bg-emerald-50/40">
                     <td className="p-2.5 border-r border-slate-200 font-bold text-emerald-950">
                       2. (+) Ingresos Recaudados en el Periodo
@@ -539,8 +642,24 @@ export default function RendicionView() {
                     <td className="p-1.5 border-r border-slate-200 text-right">{consolidado.ingAfiliacionesQr.toFixed(2)}</td>
                     <td className="p-1.5 text-right">{(consolidado.ingServiciosQr + consolidado.ingAfiliacionesQr).toFixed(2)}</td>
                   </tr>
+                  <tr className="text-[11px] text-indigo-700 bg-indigo-50/30 font-semibold">
+                    <td className="p-1.5 pl-6 border-r border-slate-200">• Ingresos Externos (Guardia y Agua)</td>
+                    <td className="p-1.5 border-r border-slate-200 text-right">{(consolidado.totalIngExternos || 0).toFixed(2)}</td>
+                    <td className="p-1.5 border-r border-slate-200 text-right">0.00</td>
+                    <td className="p-1.5 text-right">{(consolidado.totalIngExternos || 0).toFixed(2)}</td>
+                  </tr>
+                  {((consolidado.totalIngDeudoresServicios || 0) > 0 || (consolidado.totalIngDeudoresAfiliaciones || 0) > 0) && (
+                    <tr className="text-[11px] text-slate-600 bg-slate-50/60">
+                      <td className="p-1.5 pl-6 border-r border-slate-200">• Recuperación Deudores de Ciclos Anteriores</td>
+                      <td className="p-1.5 border-r border-slate-200 text-right">{(consolidado.totalIngDeudoresServicios || 0).toFixed(2)}</td>
+                      <td className="p-1.5 border-r border-slate-200 text-right">{(consolidado.totalIngDeudoresAfiliaciones || 0).toFixed(2)}</td>
+                      <td className="p-1.5 text-right">
+                        {((consolidado.totalIngDeudoresServicios || 0) + (consolidado.totalIngDeudoresAfiliaciones || 0)).toFixed(2)}
+                      </td>
+                    </tr>
+                  )}
 
-                  {/* Egresos Rango */}
+                  {/* Egresos */}
                   <tr className="bg-red-50/40">
                     <td className="p-2.5 border-r border-slate-200 font-bold text-red-950">
                       3. (-) Egresos y Gastos Ejecutados
@@ -598,7 +717,54 @@ export default function RendicionView() {
             </div>
           </div>
 
-          {/* CUADRO 2: Detalle de Egresos por Rubro con enlaces a Google Drive */}
+          {/* BLOQUE NUEVO: Resumen de Cumplimiento de Cobros */}
+          <div className="space-y-3 pt-1">
+            <h3 className="text-sm font-bold uppercase tracking-wider text-slate-800 flex items-center gap-1.5 border-b pb-1">
+              <ClipboardCheck className="w-4 h-4 text-emerald-700" />
+              Resumen de Cumplimiento de Cobros
+            </h3>
+
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 text-xs">
+              <div className="bg-slate-50 border border-slate-200 rounded-xl p-3">
+                <span className="text-[10px] font-bold uppercase text-slate-500 block">Total Puestos Activos</span>
+                <p className="text-lg font-extrabold text-slate-900 mt-0.5">{cp.totalPuestosActivos || 0}</p>
+                <span className="text-[11px] text-slate-500">
+                  (representan {cp.totalSociosActivos || 0} socios)
+                </span>
+              </div>
+
+              <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3">
+                <span className="text-[10px] font-bold uppercase text-emerald-700 block">Pagados Completos</span>
+                <p className="text-lg font-extrabold text-emerald-700 mt-0.5">{cp.puestosPagados || 0}</p>
+                <span className="text-[11px] text-emerald-600">Al día en el rango</span>
+              </div>
+
+              <div className="bg-blue-50 border border-blue-200 rounded-xl p-3">
+                <span className="text-[10px] font-bold uppercase text-blue-700 block">Pago Parcial ("A cuenta")</span>
+                <p className="text-lg font-extrabold text-blue-700 mt-0.5">{cp.puestosParciales || 0}</p>
+                <span className="text-[11px] text-blue-600">Con abono parcial</span>
+              </div>
+
+              <div className="bg-red-50 border border-red-200 rounded-xl p-3">
+                <span className="text-[10px] font-bold uppercase text-red-700 block">Pendientes / Falta Pagar</span>
+                <p className="text-lg font-extrabold text-red-700 mt-0.5">{cp.puestosPendientes || 0}</p>
+                <span className="text-[11px] text-red-600">Sin pago registrado</span>
+              </div>
+
+              <div className="bg-slate-900 text-white rounded-xl p-3 col-span-2 sm:col-span-1">
+                <span className="text-[10px] font-bold uppercase text-slate-300 block">% Cumplimiento</span>
+                <p className="text-lg font-extrabold text-emerald-400 mt-0.5">{cp.porcentajeCumplimiento || 0}%</p>
+                <div className="w-full bg-slate-700 rounded-full h-1.5 mt-1.5">
+                  <div
+                    className="bg-emerald-400 h-1.5 rounded-full"
+                    style={{ width: `${Math.min(100, cp.porcentajeCumplimiento || 0)}%` }}
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* CUADRO 2: Detalle de Egresos */}
           <div className="space-y-3 pt-2">
             <h3 className="text-sm font-bold uppercase tracking-wider text-slate-800 flex items-center gap-1.5 border-b pb-1">
               <FileSpreadsheet className="w-4 h-4 text-emerald-700" />
@@ -655,7 +821,7 @@ export default function RendicionView() {
             )}
           </div>
 
-          {/* CUADRO 3: Anexo de Socios Morosos y Saldos Pendientes (Page break para imprimir) */}
+          {/* CUADRO 3: Anexo de Socios Morosos */}
           <div className="space-y-3 pt-4 page-break">
             <h3 className="text-sm font-bold uppercase tracking-wider text-red-800 flex items-center gap-1.5 border-b pb-1">
               <Users className="w-4 h-4 text-red-600" />
@@ -716,7 +882,7 @@ export default function RendicionView() {
             )}
           </div>
 
-          {/* Pie de Firmas Oficiales para la Asamblea */}
+          {/* Pie de Firmas */}
           <div className="pt-16 pb-4 border-t border-slate-300 grid grid-cols-3 gap-8 text-center text-xs">
             <div className="border-t border-slate-900 pt-2 space-y-0.5">
               <p className="font-bold text-slate-900">Secretario de Hacienda</p>
@@ -730,6 +896,96 @@ export default function RendicionView() {
               <p className="font-bold text-slate-900">Comité de Vigilancia / Actas</p>
               <p className="text-[11px] text-slate-500">Aprobación en Asamblea</p>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Confirmación Cierre de Periodo y Arrastre de Ciclo */}
+      {isCloseModalOpen && consolidado && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-sm overflow-y-auto no-print">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-lg my-8 overflow-hidden">
+            <div className="bg-slate-900 px-6 py-4 text-white flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 bg-amber-500/20 text-amber-400 rounded-lg">
+                  <Lock className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-base">Cerrar Periodo en Asamblea y Abrir Nuevo Ciclo</h3>
+                  <p className="text-xs text-slate-400">
+                    Rango: {MESES[mesInicio]} {anioInicio} a {MESES[mesFin]} {anioFin}
+                  </p>
+                </div>
+              </div>
+              <button onClick={() => setIsCloseModalOpen(false)}>
+                <X className="w-5 h-5 text-slate-400 hover:text-white" />
+              </button>
+            </div>
+
+            <form onSubmit={handleConfirmarCierreAsamblea} className="p-6 space-y-4">
+              <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200 text-xs space-y-1.5">
+                <span className="font-bold text-slate-800 block">
+                  Saldos Finales que pasarán como Saldo Inicial del Nuevo Ciclo:
+                </span>
+                <div className="grid grid-cols-2 gap-2 pt-1">
+                  <div className="bg-white p-2 rounded-lg border border-slate-200">
+                    <span className="text-[10px] text-emerald-700 font-bold uppercase block">Caja Servicios</span>
+                    <p className="font-bold">Ef: {consolidado.finServiciosEf.toFixed(2)} Bs</p>
+                    <p className="font-bold">QR: {consolidado.finServiciosQr.toFixed(2)} Bs</p>
+                  </div>
+                  <div className="bg-white p-2 rounded-lg border border-slate-200">
+                    <span className="text-[10px] text-blue-700 font-bold uppercase block">Caja Afiliaciones</span>
+                    <p className="font-bold">Ef: {consolidado.finAfiliacionesEf.toFixed(2)} Bs</p>
+                    <p className="font-bold">QR: {consolidado.finAfiliacionesQr.toFixed(2)} Bs</p>
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Nombre del Nuevo Ciclo Abierto
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={nombreNuevoCiclo}
+                  onChange={(e) => setNombreNuevoCiclo(e.target.value)}
+                  className="w-full px-3 py-2 text-xs bg-white border border-slate-300 rounded-xl font-semibold"
+                />
+              </div>
+
+              <label className="flex items-start gap-2.5 p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-950 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={trasladarDeudas}
+                  onChange={(e) => setTrasladarDeudas(e.target.checked)}
+                  className="w-4 h-4 text-amber-600 rounded mt-0.5"
+                />
+                <span>
+                  <strong>Trasladar saldos pendientes al módulo de Deudores ({consolidado.deudoresServicios.length + consolidado.deudoresAfiliaciones.length} pendientes)</strong>
+                  <span className="block text-[11px] text-amber-800 mt-0.5">
+                    Permite seguir cobrando estos saldos en el nuevo ciclo desde DeudoresView sin perder historial.
+                  </span>
+                </span>
+              </label>
+
+              <div className="pt-2 flex justify-end gap-2 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setIsCloseModalOpen(false)}
+                  className="px-4 py-2 text-xs text-slate-600"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={lockingPeriod}
+                  className="px-5 py-2.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-md"
+                >
+                  <CheckCircle2 className="w-4 h-4" />
+                  <span>{lockingPeriod ? 'Cerrando Ciclo...' : 'Confirmar y Sellar en Asamblea'}</span>
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
-import { useAuth } from '../../context/AuthContext'
+import { MESES } from '../../lib/formatters'
 import FotoUploaderModal from './FotoUploaderModal'
-import { Zap, Camera, CheckCircle2, AlertCircle, X, Store, Layers, FileText, ExternalLink, Calendar } from 'lucide-react'
+import { Zap, Camera, CheckCircle2, AlertCircle, X, ExternalLink } from 'lucide-react'
 
 export default function AbrirMesModal({
   isOpen,
@@ -13,10 +13,11 @@ export default function AbrirMesModal({
   tarifas = {},
   onMonthOpened,
 }) {
-  const { user } = useAuth()
-  const [facturaBs, setFacturaBs] = useState(periodoExistente?.factura_luz_bs || '')
-  const [facturaKwh, setFacturaKwh] = useState(periodoExistente?.factura_luz_kwh || '')
-  const [facturaUrl, setFacturaUrl] = useState(periodoExistente?.factura_luz_drive_url || '')
+  const [facturaEnergia, setFacturaEnergia] = useState('')
+  const [facturaAlumbrado, setFacturaAlumbrado] = useState('')
+  const [facturaBasura, setFacturaBasura] = useState('')
+  const [facturaKwh, setFacturaKwh] = useState('')
+  const [facturaUrl, setFacturaUrl] = useState('')
   const [unidades, setUnidades] = useState([])
   const [unidadesModalidad, setUnidadesModalidad] = useState({})
   const [loading, setLoading] = useState(true)
@@ -25,17 +26,40 @@ export default function AbrirMesModal({
   const [successMsg, setSuccessMsg] = useState('')
   const [isPhotoModalOpen, setIsPhotoModalOpen] = useState(false)
 
-  // Cálculo automático del precio por kWh
-  const bsNum = parseFloat(facturaBs) || 0
+  const energiaNum = parseFloat(facturaEnergia) || 0
+  const alumbradoNum = parseFloat(facturaAlumbrado) || 0
+  const basuraNum = parseFloat(facturaBasura) || 0
+  const totalFacturaBs = energiaNum + alumbradoNum + basuraNum
   const kwhNum = parseFloat(facturaKwh) || 0
-  const precioKwhCalculado = kwhNum > 0 ? (bsNum / kwhNum).toFixed(4) : '0.0000'
+
+  // REGLA CRÍTICA: Precio por kWh = ÚNICAMENTE Consumo de Energía / Total kWh
+  const precioKwhCalculado = kwhNum > 0 ? (energiaNum / kwhNum).toFixed(4) : '0.0000'
 
   useEffect(() => {
     if (!isOpen) return
 
-    setFacturaBs(periodoExistente?.factura_luz_bs || '')
-    setFacturaKwh(periodoExistente?.factura_luz_kwh || '')
-    setFacturaUrl(periodoExistente?.factura_luz_drive_url || '')
+    if (periodoExistente) {
+      const hasDesglose =
+        (parseFloat(periodoExistente.factura_energia_bs) || 0) > 0 ||
+        (parseFloat(periodoExistente.factura_alumbrado_bs) || 0) > 0 ||
+        (parseFloat(periodoExistente.factura_basura_bs) || 0) > 0
+      setFacturaEnergia(
+        hasDesglose
+          ? periodoExistente.factura_energia_bs ?? ''
+          : periodoExistente.factura_luz_bs ?? ''
+      )
+      setFacturaAlumbrado(periodoExistente.factura_alumbrado_bs ?? 0)
+      setFacturaBasura(periodoExistente.factura_basura_bs ?? 0)
+      setFacturaKwh(periodoExistente.factura_luz_kwh || '')
+      setFacturaUrl(periodoExistente.factura_luz_drive_url || '')
+    } else {
+      setFacturaEnergia('')
+      setFacturaAlumbrado('0')
+      setFacturaBasura('0')
+      setFacturaKwh('')
+      setFacturaUrl('')
+    }
+
     setErrorMsg('')
     setSuccessMsg('')
 
@@ -54,10 +78,9 @@ export default function AbrirMesModal({
         if (error) throw error
 
         setUnidades(data || [])
-        // Inicializar foto histórica de modalidades para este mes
         const mods = {}
         data?.forEach((u) => {
-          mods[u.id] = u.tipo === 'variable' ? 'variable' : (u.subtipo_fijo || 'puesto_abierto')
+          mods[u.id] = u.tipo === 'variable' ? 'variable' : u.subtipo_fijo || 'puesto_abierto'
         })
         setUnidadesModalidad(mods)
       } catch (err) {
@@ -87,14 +110,17 @@ export default function AbrirMesModal({
     setSaving(true)
 
     try {
-      // 1. Guardar o actualizar periodo mensual
       const periodoPayload = {
         mes: parseInt(mes, 10),
         anio: parseInt(anio, 10),
-        factura_luz_bs: bsNum,
+        factura_energia_bs: energiaNum,
+        factura_alumbrado_bs: alumbradoNum,
+        factura_basura_bs: basuraNum,
+        factura_luz_bs: totalFacturaBs,
         factura_luz_kwh: kwhNum,
         precio_kwh_calculado: parseFloat(precioKwhCalculado) || 0,
         factura_luz_drive_url: facturaUrl || null,
+        estado_pago_factura: periodoExistente?.estado_pago_factura || 'pendiente_pago',
       }
 
       let periodoId = periodoExistente?.id
@@ -115,21 +141,19 @@ export default function AbrirMesModal({
         periodoId = newP.id
       }
 
-      // 2. Generar foto histórica de cobros_servicios para cada unidad activa
+      // Generar foto histórica de cobros_servicios para cada unidad activa sin sobrescribir existentes
       const baseVariable = parseFloat(tarifas.base_variable_puesto) || 58
       const tarifaCerrado = parseFloat(tarifas.tarifa_fija_cerrado) || 55
       const tarifaAbierto = parseFloat(tarifas.tarifa_fija_abierto) || 70
       const tarifaAmbulante = parseFloat(tarifas.tarifa_fija_ambulante) || 50
       const tarifaNoSocio = parseFloat(tarifas.tarifa_fija_no_socio) || 50
 
-      // Buscar cobros ya existentes en este periodo para no sobreescribir lecturas ya tomadas
       const { data: existingCobros } = await supabase
         .from('cobros_servicios')
         .select('unidad_id, id')
         .eq('periodo_id', periodoId)
 
       const existingMap = new Set(existingCobros?.map((c) => c.unidad_id) || [])
-
       const cobrosToInsert = []
 
       for (const unidad of unidades) {
@@ -174,7 +198,9 @@ export default function AbrirMesModal({
         if (cError) throw cError
       }
 
-      setSuccessMsg(`¡Periodo ${mes}/${anio} abierto y configurado con éxito! Se registraron las unidades activas.`)
+      setSuccessMsg(
+        `¡Periodo ${MESES[mes]} ${anio} guardado (estado: Pendiente de pago hasta cancelar la factura)!`
+      )
       if (onMonthOpened) onMonthOpened(periodoId)
       setTimeout(() => {
         onClose()
@@ -187,26 +213,9 @@ export default function AbrirMesModal({
     }
   }
 
-  const MESES = [
-    '',
-    'Enero',
-    'Febrero',
-    'Marzo',
-    'Abril',
-    'Mayo',
-    'Junio',
-    'Julio',
-    'Agosto',
-    'Septiembre',
-    'Octubre',
-    'Noviembre',
-    'Diciembre',
-  ]
-
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-sm overflow-y-auto animate-fadeIn">
       <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-2xl my-8 overflow-hidden">
-        {/* Header */}
         <div className="bg-slate-900 px-6 py-4 text-white flex items-center justify-between">
           <div className="flex items-center space-x-2.5">
             <div className="p-2 bg-emerald-500/20 text-emerald-400 rounded-lg">
@@ -216,7 +225,9 @@ export default function AbrirMesModal({
               <h3 className="font-bold text-base leading-tight">
                 Apertura de Periodo: {MESES[mes]} {anio}
               </h3>
-              <p className="text-xs text-slate-400">Factura general de luz y foto histórica de puestos</p>
+              <p className="text-xs text-slate-400">
+                Desglose real de factura de luz (no descuenta de caja hasta que se registre su pago)
+              </p>
             </div>
           </div>
           <button
@@ -227,7 +238,6 @@ export default function AbrirMesModal({
           </button>
         </div>
 
-        {/* Body */}
         <form onSubmit={handleConfirm} className="p-6 space-y-5 max-h-[78vh] overflow-y-auto">
           {errorMsg && (
             <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-xs text-red-700 flex items-start gap-2">
@@ -243,30 +253,64 @@ export default function AbrirMesModal({
             </div>
           )}
 
-          {/* Sección 1: Datos de la Factura de Luz */}
+          {/* Sección 1: Desglose de la Factura de Luz */}
           <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-3">
             <span className="text-xs font-bold uppercase tracking-wider text-amber-800 flex items-center gap-1.5 border-b pb-1">
               <Zap className="w-4 h-4 text-amber-500" />
-              1. Factura General de Energía Eléctrica (CRE / Cooperativa)
+              1. Desglose Factura General de Luz (CRE / Cooperativa)
             </span>
 
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
               <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">Monto Total Factura (Bs)</label>
+                <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                  Consumo Energía (Bs) <span className="text-red-500">*</span>
+                </label>
                 <input
                   type="number"
                   step="0.01"
                   min="0"
                   required
-                  value={facturaBs}
-                  onChange={(e) => setFacturaBs(e.target.value)}
-                  placeholder="Ej. 3450.00"
+                  value={facturaEnergia}
+                  onChange={(e) => setFacturaEnergia(e.target.value)}
+                  placeholder="Ej. 2850.00"
                   className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-xl font-bold focus:ring-2 focus:ring-emerald-500 focus:outline-none"
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">Total Consumo (kWh)</label>
+                <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                  Alumbrado Público (Bs)
+                </label>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={facturaAlumbrado}
+                  onChange={(e) => setFacturaAlumbrado(e.target.value)}
+                  placeholder="0.00"
+                  className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-xl font-bold focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                  Recojo de Basura (Bs)
+                </label>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={facturaBasura}
+                  onChange={(e) => setFacturaBasura(e.target.value)}
+                  placeholder="0.00"
+                  className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-xl font-bold focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                  Total Consumo (kWh) <span className="text-red-500">*</span>
+                </label>
                 <input
                   type="number"
                   step="0.01"
@@ -274,26 +318,47 @@ export default function AbrirMesModal({
                   required
                   value={facturaKwh}
                   onChange={(e) => setFacturaKwh(e.target.value)}
-                  placeholder="Ej. 4200"
+                  placeholder="Ej. 3200"
                   className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-xl font-bold focus:ring-2 focus:ring-emerald-500 focus:outline-none"
                 />
               </div>
+            </div>
 
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">Precio por kWh Calculado</label>
-                <div className="px-3 py-2 text-sm bg-emerald-50 border border-emerald-200 rounded-xl font-mono font-bold text-emerald-800 flex items-center justify-between">
-                  <span>{precioKwhCalculado}</span>
-                  <span className="text-xs font-normal text-emerald-600">Bs/kWh</span>
+            {/* Totales calculados */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+              <div className="px-3.5 py-2.5 bg-white border border-slate-200 rounded-xl flex items-center justify-between">
+                <div>
+                  <span className="text-[10px] font-bold uppercase text-slate-400 block">
+                    Total Factura (Energía + Alumbrado + Basura)
+                  </span>
+                  <span className="text-[10px] text-slate-500">Monto real a pagar en caja al vencer</span>
                 </div>
+                <span className="text-base font-extrabold text-slate-900">
+                  {totalFacturaBs.toFixed(2)} Bs
+                </span>
+              </div>
+
+              <div className="px-3.5 py-2.5 bg-emerald-50 border border-emerald-200 rounded-xl flex items-center justify-between">
+                <div>
+                  <span className="text-[10px] font-bold uppercase text-emerald-700 block">
+                    Precio por kWh (Sólo Energía ÷ kWh)
+                  </span>
+                  <span className="text-[10px] text-emerald-600">
+                    Alumbrado y basura ya están en los 58 Bs fijos
+                  </span>
+                </div>
+                <span className="text-base font-mono font-extrabold text-emerald-800">
+                  {precioKwhCalculado} Bs/kWh
+                </span>
               </div>
             </div>
 
             {/* Subida de Foto de Factura a Google Drive */}
             <div className="pt-2 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 border-t border-slate-200 text-xs">
               <div>
-                <span className="font-semibold text-slate-700 block">Foto de la Factura de Luz</span>
+                <span className="font-semibold text-slate-700 block">Foto de la Factura de Luz (Opcional)</span>
                 <span className="text-[11px] text-slate-500">
-                  Respaldo fotográfico para rendición de asamblea (Google Drive).
+                  Respaldo fotográfico en carpeta Google Drive: Facturas_Generales
                 </span>
               </div>
 
@@ -321,7 +386,7 @@ export default function AbrirMesModal({
             </div>
           </div>
 
-          {/* Sección 2: Foto Histórica de Unidades para este mes */}
+          {/* Sección 2: Foto Histórica de Unidades */}
           <div className="space-y-3">
             <div className="flex items-center justify-between border-b pb-1">
               <div>
@@ -372,7 +437,6 @@ export default function AbrirMesModal({
             )}
           </div>
 
-          {/* Botones */}
           <div className="pt-2 flex items-center justify-end gap-2.5 border-t border-slate-100">
             <button
               type="button"
@@ -387,13 +451,12 @@ export default function AbrirMesModal({
               className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-md shadow-emerald-900/20 transition-all flex items-center gap-1.5"
             >
               <CheckCircle2 className="w-4 h-4" />
-              <span>{saving ? 'Guardando Periodo...' : 'Abrir Mes y Generar Cobros'}</span>
+              <span>{saving ? 'Guardando Periodo...' : 'Guardar Periodo y Generar Cobros'}</span>
             </button>
           </div>
         </form>
       </div>
 
-      {/* Subida de Foto Factura */}
       <FotoUploaderModal
         isOpen={isPhotoModalOpen}
         onClose={() => setIsPhotoModalOpen(false)}

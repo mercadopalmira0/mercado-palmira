@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
-import { Settings, CheckCircle2, AlertCircle, X, ShieldAlert, Zap, Clock, UserPlus, Layers } from 'lucide-react'
+import { registrarAuditoria } from '../../lib/auditoria'
+import { Settings, CheckCircle2, AlertCircle, X, ShieldAlert, Zap, Clock, UserPlus, Shield } from 'lucide-react'
 
 export default function TarifasModal({ isOpen, onClose, onUpdated }) {
   const { user } = useAuth()
@@ -10,11 +11,8 @@ export default function TarifasModal({ isOpen, onClose, onUpdated }) {
   const [errorMsg, setErrorMsg] = useState('')
   const [successMsg, setSuccessMsg] = useState('')
   const [tarifaId, setTarifaId] = useState(null)
-
-  // Valores originales para comparar cambios e insertar en bitacora
   const [originalValues, setOriginalValues] = useState({})
 
-  // Form State
   const [tarifaFijaCerrado, setTarifaFijaCerrado] = useState(55)
   const [tarifaFijaAbierto, setTarifaFijaAbierto] = useState(70)
   const [tarifaFijaAmbulante, setTarifaFijaAmbulante] = useState(50)
@@ -24,6 +22,7 @@ export default function TarifasModal({ isOpen, onClose, onUpdated }) {
   const [multaTopeMensual, setMultaTopeMensual] = useState(70)
   const [multaMinimoExento, setMultaMinimoExento] = useState(35)
   const [costoAfiliacion, setCostoAfiliacion] = useState(1500)
+  const [sueldoGuardiaMensual, setSueldoGuardiaMensual] = useState(0)
   const [tipoRedondeoLuz, setTipoRedondeoLuz] = useState('arriba_0_50')
   const [diasProrrogaMax, setDiasProrrogaMax] = useState(2)
 
@@ -54,6 +53,7 @@ export default function TarifasModal({ isOpen, onClose, onUpdated }) {
           setMultaTopeMensual(data.multa_tope_mensual)
           setMultaMinimoExento(data.multa_minimo_exento)
           setCostoAfiliacion(data.costo_afiliacion)
+          setSueldoGuardiaMensual(data.sueldo_guardia_mensual ?? 0)
           setTipoRedondeoLuz(data.tipo_redondeo_luz || 'arriba_0_50')
           setDiasProrrogaMax(data.dias_prorroga_max || 2)
 
@@ -67,6 +67,7 @@ export default function TarifasModal({ isOpen, onClose, onUpdated }) {
             multa_tope_mensual: data.multa_tope_mensual,
             multa_minimo_exento: data.multa_minimo_exento,
             costo_afiliacion: data.costo_afiliacion,
+            sueldo_guardia_mensual: data.sueldo_guardia_mensual ?? 0,
             tipo_redondeo_luz: data.tipo_redondeo_luz,
             dias_prorroga_max: data.dias_prorroga_max,
           })
@@ -100,11 +101,11 @@ export default function TarifasModal({ isOpen, onClose, onUpdated }) {
       multa_tope_mensual: parseFloat(multaTopeMensual) || 0,
       multa_minimo_exento: parseFloat(multaMinimoExento) || 0,
       costo_afiliacion: parseFloat(costoAfiliacion) || 0,
+      sueldo_guardia_mensual: parseFloat(sueldoGuardiaMensual) || 0,
       tipo_redondeo_luz: tipoRedondeoLuz,
       dias_prorroga_max: parseInt(diasProrrogaMax, 10) || 2,
     }
 
-    // Identificar cambios exactos para la bitácora
     const cambios = []
     Object.keys(newValues).forEach((key) => {
       if (originalValues[key] !== undefined && originalValues[key] !== newValues[key]) {
@@ -117,8 +118,6 @@ export default function TarifasModal({ isOpen, onClose, onUpdated }) {
     })
 
     try {
-      let savedId = tarifaId
-
       if (tarifaId) {
         const { error } = await supabase
           .from('configuracion_tarifas')
@@ -132,41 +131,31 @@ export default function TarifasModal({ isOpen, onClose, onUpdated }) {
           .select()
           .single()
         if (error) throw error
-        savedId = data.id
         setTarifaId(data.id)
       }
 
-      // Registro estricto en bitacora_auditoria si hubo cambios
       if (cambios.length > 0) {
-        const { error: auditError } = await supabase.from('bitacora_auditoria').insert([
-          {
-            usuario_id: user?.id || null,
-            accion: 'ACTUALIZACION_TARIFAS',
-            detalle_json: {
-              descripcion: `Modificación de ${cambios.length} parámetro(s) de tarifas`,
-              cambios,
-              valores_anteriores: originalValues,
-              valores_nuevos: newValues,
-            },
-            device_id: window.navigator.userAgent,
-            user_agent: window.navigator.userAgent,
-            es_sospechoso: false,
+        await registrarAuditoria({
+          usuarioId: user?.id,
+          accion: 'ACTUALIZACION_TARIFAS',
+          detalleJson: {
+            descripcion: `Modificación de ${cambios.length} parámetro(s) de tarifas`,
+            cambios,
+            valores_anteriores: originalValues,
+            valores_nuevos: newValues,
           },
-        ])
-        if (auditError) {
-          console.warn('Aviso: no se pudo registrar en bitácora:', auditError.message)
-        }
+        })
       }
 
       setSuccessMsg(
         `¡Tarifas actualizadas correctamente! ${
-          cambios.length > 0 ? `(${cambios.length} cambio(s) registrado(s) en la bitácora de auditoría)` : ''
+          cambios.length > 0 ? `(${cambios.length} cambio(s) registrado(s) en la bitácora)` : ''
         }`
       )
       if (onUpdated) onUpdated()
       setTimeout(() => {
         onClose()
-      }, 1200)
+      }, 1000)
     } catch (err) {
       console.error('Error guardando tarifas:', err)
       const isRlsError = err.message?.includes('violates row-level security policy') || err.code === '42501'
@@ -183,7 +172,6 @@ export default function TarifasModal({ isOpen, onClose, onUpdated }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-sm overflow-y-auto animate-fadeIn">
       <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-xl my-8 overflow-hidden">
-        {/* Header */}
         <div className="bg-slate-900 px-6 py-4 text-white flex items-center justify-between">
           <div className="flex items-center space-x-2.5">
             <div className="p-2 bg-emerald-500/20 text-emerald-400 rounded-lg">
@@ -202,16 +190,8 @@ export default function TarifasModal({ isOpen, onClose, onUpdated }) {
           </button>
         </div>
 
-        {/* Body */}
         <form onSubmit={handleSave} className="p-6 space-y-4 max-h-[75vh] overflow-y-auto">
-          {!user && (
-            <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-900 flex items-start gap-2">
-              <ShieldAlert className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
-              <span>
-                Los cambios de tarifas solo pueden ser ejecutados por el <strong>Secretario de Hacienda (Admin)</strong>.
-              </span>
-            </div>
-          )}
+          {loading && <p className="text-xs text-slate-500 text-center">Cargando configuración...</p>}
 
           {errorMsg && (
             <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-xs text-red-700 flex items-start gap-2">
@@ -227,7 +207,6 @@ export default function TarifasModal({ isOpen, onClose, onUpdated }) {
             </div>
           )}
 
-          {/* Grupo 1: Tarifas Fijas */}
           <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200 space-y-2.5">
             <span className="text-xs font-bold uppercase tracking-wider text-slate-700 block border-b pb-1">
               1. Tarifas Fijas Mensuales
@@ -291,7 +270,6 @@ export default function TarifasModal({ isOpen, onClose, onUpdated }) {
             </div>
           </div>
 
-          {/* Grupo 2: Base Variable y Luz */}
           <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200 space-y-2.5">
             <span className="text-xs font-bold uppercase tracking-wider text-amber-800 flex items-center gap-1.5 border-b pb-1">
               <Zap className="w-3.5 h-3.5 text-amber-500" />
@@ -299,9 +277,7 @@ export default function TarifasModal({ isOpen, onClose, onUpdated }) {
             </span>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  Base Mensual por Puesto (Bs)
-                </label>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Base Mensual por Puesto (Bs)</label>
                 <input
                   type="number"
                   step="0.50"
@@ -310,30 +286,24 @@ export default function TarifasModal({ isOpen, onClose, onUpdated }) {
                   className="w-full px-3 py-1.5 text-sm bg-white border border-slate-300 rounded-xl font-bold"
                 />
                 <span className="text-[10px] text-slate-500 mt-0.5 block">
-                  Regla: 40 Bs guardia + 5 Bs agua + 5 Bs alumbrado + 8 Bs basura = 58 Bs.
+                  40 Bs guardia + 5 Bs agua + 5 Bs alumbrado + 8 Bs basura = 58 Bs.
                 </span>
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  Tipo de Redondeo de Luz (Bs)
-                </label>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Tipo de Redondeo de Luz (Bs)</label>
                 <select
                   value={tipoRedondeoLuz}
                   onChange={(e) => setTipoRedondeoLuz(e.target.value)}
                   className="w-full px-3 py-1.5 text-xs bg-white border border-slate-300 rounded-xl font-medium"
                 >
-                  <option value="arriba_0_50">Hacia arriba al 0,50 Bs más cercano (Recomendado)</option>
+                  <option value="arriba_0_50">Hacia arriba al 0,50 Bs más cercano</option>
                   <option value="arriba_1_00">Hacia arriba al +1,00 Bs más cercano</option>
                 </select>
-                <span className="text-[10px] text-slate-500 mt-0.5 block">
-                  El cálculo de luz nunca redondea hacia abajo.
-                </span>
               </div>
             </div>
           </div>
 
-          {/* Grupo 3: Multas, Vencimientos y Prórrogas */}
           <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200 space-y-2.5">
             <span className="text-xs font-bold uppercase tracking-wider text-blue-800 flex items-center gap-1.5 border-b pb-1">
               <Clock className="w-3.5 h-3.5 text-blue-500" />
@@ -384,31 +354,45 @@ export default function TarifasModal({ isOpen, onClose, onUpdated }) {
                 />
               </div>
             </div>
-            <p className="text-[10px] text-slate-500">
-              A partir del 1° del mes suma 10 Bs/día hasta tope de 70 Bs. Si el socio abona al menos 35 Bs antes del vencimiento, no genera multa.
-            </p>
           </div>
 
-          {/* Grupo 4: Afiliaciones */}
-          <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200 space-y-2.5">
-            <span className="text-xs font-bold uppercase tracking-wider text-purple-800 flex items-center gap-1.5 border-b pb-1">
-              <UserPlus className="w-3.5 h-3.5 text-purple-500" />
-              4. Afiliación de Nuevos Socios
-            </span>
-            <div className="max-w-xs">
-              <label className="block text-xs font-semibold text-slate-700 mb-1">Costo Total de Afiliación (Bs)</label>
-              <input
-                type="number"
-                step="50"
-                value={costoAfiliacion}
-                onChange={(e) => setCostoAfiliacion(e.target.value)}
-                className="w-full px-3 py-1.5 text-sm bg-white border border-slate-300 rounded-xl font-bold"
-              />
-              <span className="text-[10px] text-slate-500 mt-0.5 block">Plan estándar: 1.500 Bs por socio nuevo.</span>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200 space-y-2">
+              <span className="text-xs font-bold uppercase tracking-wider text-purple-800 flex items-center gap-1.5 border-b pb-1">
+                <UserPlus className="w-3.5 h-3.5 text-purple-500" />
+                4. Afiliación
+              </span>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Costo Total (Bs)</label>
+                <input
+                  type="number"
+                  step="50"
+                  value={costoAfiliacion}
+                  onChange={(e) => setCostoAfiliacion(e.target.value)}
+                  className="w-full px-3 py-1.5 text-sm bg-white border border-slate-300 rounded-xl font-bold"
+                />
+              </div>
+            </div>
+
+            <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200 space-y-2">
+              <span className="text-xs font-bold uppercase tracking-wider text-emerald-800 flex items-center gap-1.5 border-b pb-1">
+                <Shield className="w-3.5 h-3.5 text-emerald-600" />
+                5. Sueldo Guardia
+              </span>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Sueldo Mensual (Bs)</label>
+                <input
+                  type="number"
+                  step="10"
+                  min="0"
+                  value={sueldoGuardiaMensual}
+                  onChange={(e) => setSueldoGuardiaMensual(e.target.value)}
+                  className="w-full px-3 py-1.5 text-sm bg-white border border-slate-300 rounded-xl font-bold"
+                />
+              </div>
             </div>
           </div>
 
-          {/* Botones */}
           <div className="pt-2 flex items-center justify-end gap-2.5">
             <button
               type="button"
@@ -423,7 +407,7 @@ export default function TarifasModal({ isOpen, onClose, onUpdated }) {
               className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-md shadow-emerald-900/20 transition-all flex items-center gap-1.5"
             >
               <CheckCircle2 className="w-4 h-4" />
-              <span>{saving ? 'Guardando en Supabase...' : 'Guardar y Registrar en Bitácora'}</span>
+              <span>{saving ? 'Guardando...' : 'Guardar y Registrar en Bitácora'}</span>
             </button>
           </div>
         </form>

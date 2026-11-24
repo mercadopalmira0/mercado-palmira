@@ -1,32 +1,16 @@
 /**
  * Reglas de Cálculo de Cobros, Tarifas, Luz y Multas
  * Secretaría de Hacienda - Mercado Palmira
- * 
- * Cumple estrictamente con contexto_hacienda_mercado_palmira.md
  */
 
-/**
- * Redondea el monto de luz siempre hacia arriba según la configuración.
- * @param {number} monto 
- * @param {string} tipoRedondeo - 'arriba_0_50' | 'arriba_1_00'
- * @returns {number}
- */
 export function roundLuz(monto, tipoRedondeo = 'arriba_0_50') {
   if (!monto || monto <= 0) return 0
   if (tipoRedondeo === 'arriba_1_00') {
     return Math.ceil(monto)
   }
-  // arriba_0_50: redondeo hacia arriba al múltiplo de 0.50 más cercano
   return Math.ceil(monto * 2) / 2
 }
 
-/**
- * Calcula el consumo de energía en kWh.
- * @param {number} lecturaAnt 
- * @param {number} lecturaAct 
- * @param {boolean} cambioTarifador 
- * @returns {number}
- */
 export function calcularConsumo(lecturaAnt, lecturaAct, cambioTarifador = false) {
   const ant = parseFloat(lecturaAnt) || 0
   const act = parseFloat(lecturaAct) || 0
@@ -36,15 +20,7 @@ export function calcularConsumo(lecturaAnt, lecturaAct, cambioTarifador = false)
   return Math.max(0, act - ant)
 }
 
-/**
- * Calcula la fecha de vencimiento base del mes (último día del mes correspondiente).
- * @param {number} mes - 1 a 12
- * @param {number} anio 
- * @param {number} diasProrroga - Días de extensión (máx 2)
- * @returns {Date}
- */
 export function calcularFechaVencimiento(mes, anio, diasProrroga = 0) {
-  // Último día del mes: new Date(anio, mes, 0)
   const finDeMes = new Date(anio, mes, 0, 23, 59, 59, 999)
   if (diasProrroga > 0) {
     finDeMes.setDate(finDeMes.getDate() + diasProrroga)
@@ -52,24 +28,6 @@ export function calcularFechaVencimiento(mes, anio, diasProrroga = 0) {
   return finDeMes
 }
 
-/**
- * Calcula la multa por mora según las reglas de negocio:
- * - Inicia el 1 del mes siguiente a razón de 10 Bs por día.
- * - Tope máximo de 70 Bs por mes.
- * - Exención si abonó al menos 35 Bs (o mínimo exento configurado) antes del vencimiento.
- * - Exención si cuenta con fecha_pago_especial vigente aprobada por directiva.
- * - Prórroga de hasta 2 días sin multa.
- * 
- * @param {Object} params
- * @param {number} params.mes
- * @param {number} params.anio
- * @param {number} params.diasProrroga
- * @param {string|null} params.fechaPagoEspecial - 'YYYY-MM-DD'
- * @param {Array} params.pagosActivos - Lista de pagos no anulados
- * @param {Object} params.tarifas - Configuración de tarifas vigentes
- * @param {Date} [params.fechaActual] - Fecha de cálculo (default: hoy)
- * @returns {{ diasRetraso: number, multaCalculada: number, motivoExencion: string|null }}
- */
 export function calcularMultaMora({
   mes,
   anio,
@@ -133,8 +91,7 @@ export function calcularMultaMora({
 
 /**
  * Calcula el desglose completo del cobro para una unidad de cobro en un mes dado.
- * @param {Object} params
- * @returns {Object} Desglose detallado
+ * Incluye soporte para campañas de perdonazo de multas.
  */
 export function calcularDesgloseCobro({
   modalidadAplicada,
@@ -150,6 +107,7 @@ export function calcularDesgloseCobro({
   pagosActivos = [],
   mes,
   anio,
+  perdonazoActivo = null,
 }) {
   const baseVariable = parseFloat(tarifas.base_variable_puesto) || 58
   const tarifaCerrado = parseFloat(tarifas.tarifa_fija_cerrado) || 55
@@ -166,13 +124,11 @@ export function calcularDesgloseCobro({
   if (modalidadAplicada === 'variable') {
     consumoKwh = calcularConsumo(lecturaAnt, lecturaAct, cambioTarifador)
 
-    // REGLA 0 KWH: Si el consumo marca 0 kWh, se cobra automáticamente la tarifa fija de puesto cerrado (55 Bs)
     if (consumoKwh === 0) {
       montoBase = tarifaCerrado
       montoLuzRedondeado = 0
       reglaCeroKwhAplicada = true
     } else {
-      // Puestos agrupados: multiplica la base variable por los puestos
       montoBase = baseVariable * (parseInt(cantidadPuestos, 10) || 1)
       const luzCruda = consumoKwh * (parseFloat(precioKwh) || 0)
       montoLuzRedondeado = roundLuz(luzCruda, tipoRedondeo)
@@ -189,7 +145,6 @@ export function calcularDesgloseCobro({
     montoBase = baseVariable
   }
 
-  // Multa
   const { diasRetraso, multaCalculada, motivoExencion } = calcularMultaMora({
     mes,
     anio,
@@ -199,10 +154,22 @@ export function calcularDesgloseCobro({
     tarifas,
   })
 
-  const multaNeta = Math.max(0, multaCalculada - (parseFloat(multaPerdonada) || 0))
-  const totalAPagar = montoBase + montoLuzRedondeado + multaNeta
+  const manualPerdon = parseFloat(multaPerdonada) || 0
+  const multaDespuesManual = Math.max(0, multaCalculada - manualPerdon)
 
+  // Aplicar descuento de campaña de Perdonazo si está vigente y aún hay multa pendiente por pagar
   const totalPagado = pagosActivos.reduce((sum, p) => sum + (parseFloat(p.monto) || 0), 0)
+  const yaPagadoCompletoSinPerdonazo = totalPagado >= montoBase + montoLuzRedondeado + multaDespuesManual && totalPagado > 0
+
+  let descuentoPerdonazo = 0
+  let porcentajePerdonazo = 0
+  if (perdonazoActivo && multaDespuesManual > 0 && !yaPagadoCompletoSinPerdonazo) {
+    porcentajePerdonazo = parseFloat(perdonazoActivo.porcentaje_descuento) || 0
+    descuentoPerdonazo = Math.round(multaDespuesManual * (porcentajePerdonazo / 100) * 100) / 100
+  }
+
+  const multaNeta = Math.max(0, multaDespuesManual - descuentoPerdonazo)
+  const totalAPagar = montoBase + montoLuzRedondeado + multaNeta
   const saldoPendiente = Math.max(0, totalAPagar - totalPagado)
 
   let estado = 'pendiente'
@@ -219,7 +186,9 @@ export function calcularDesgloseCobro({
     reglaCeroKwhAplicada,
     diasRetraso,
     montoMulta: multaCalculada,
-    multaPerdonada: parseFloat(multaPerdonada) || 0,
+    multaPerdonada: manualPerdon,
+    descuentoPerdonazo,
+    porcentajePerdonazo,
     multaNeta,
     motivoExencion,
     totalAPagar,

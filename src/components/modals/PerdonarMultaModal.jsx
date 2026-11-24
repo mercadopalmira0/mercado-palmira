@@ -1,6 +1,9 @@
 import React, { useState } from 'react'
 import { supabase } from '../../lib/supabase'
-import { Clock, CheckCircle2, AlertCircle, X, ShieldAlert } from 'lucide-react'
+import { useAuth } from '../../context/AuthContext'
+import { registrarAuditoria } from '../../lib/auditoria'
+import { getNombreSocioCobro } from '../../lib/formatters'
+import { Clock, CheckCircle2, AlertCircle, X } from 'lucide-react'
 
 export default function PerdonarMultaModal({
   isOpen,
@@ -8,20 +11,24 @@ export default function PerdonarMultaModal({
   cobro,
   onMultaUpdated,
 }) {
-  const [montoPerdonado, setMontoPerdonado] = useState(cobro?.monto_multa || 0)
+  const { user } = useAuth()
+  const [montoPerdonado, setMontoPerdonado] = useState(cobro?.montoMulta || cobro?.monto_multa || 0)
   const [motivoPerdon, setMotivoPerdon] = useState('')
   const [saving, setSaving] = useState(false)
   const [errorMsg, setErrorMsg] = useState('')
 
   React.useEffect(() => {
     if (isOpen && cobro) {
-      setMontoPerdonado(cobro.monto_multa || 0)
+      setMontoPerdonado(cobro.montoMulta ?? cobro.monto_multa ?? 0)
       setMotivoPerdon(cobro.motivo_perdon_multa || '')
       setErrorMsg('')
     }
   }, [isOpen, cobro])
 
   if (!isOpen || !cobro) return null
+
+  const nombreSocio = getNombreSocioCobro(cobro)
+  const multaBase = parseFloat(cobro.montoMulta ?? cobro.monto_multa) || 0
 
   const handleConfirm = async (e) => {
     e.preventDefault()
@@ -35,17 +42,15 @@ export default function PerdonarMultaModal({
 
     try {
       const perdonNum = parseFloat(montoPerdonado) || 0
-      const multaOriginal = parseFloat(cobro.monto_multa) || 0
-      const multaNeta = Math.max(0, multaOriginal - perdonNum)
-
-      // Recalcular total a pagar
-      const base = parseFloat(cobro.monto_base) || 0
-      const luz = parseFloat(cobro.monto_luz_redondeado) || 0
+      const multaNeta = Math.max(0, multaBase - perdonNum)
+      const base = parseFloat(cobro.montoBase ?? cobro.monto_base) || 0
+      const luz = parseFloat(cobro.montoLuzRedondeado ?? cobro.monto_luz_redondeado) || 0
       const nuevoTotal = base + luz + multaNeta
 
       const { error } = await supabase
         .from('cobros_servicios')
         .update({
+          monto_multa: multaBase,
           multa_perdonada: perdonNum,
           motivo_perdon_multa: motivoPerdon.trim(),
           total_a_pagar: nuevoTotal,
@@ -53,6 +58,16 @@ export default function PerdonarMultaModal({
         .eq('id', cobro.id)
 
       if (error) throw error
+
+      await registrarAuditoria({
+        usuarioId: user?.id,
+        accion: 'PERDON_MULTA_MANUAL',
+        detalleJson: {
+          descripcion: `Rebaja de multa a ${nombreSocio} (${cobro.unidades_cobro?.numero_identificador}): ${perdonNum} Bs`,
+          cobro_id: cobro.id,
+          motivo: motivoPerdon.trim(),
+        },
+      })
 
       if (onMultaUpdated) onMultaUpdated()
       onClose()
@@ -67,7 +82,6 @@ export default function PerdonarMultaModal({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-sm overflow-y-auto animate-fadeIn">
       <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-md my-8 overflow-hidden">
-        {/* Header */}
         <div className="bg-slate-900 px-6 py-4 text-white flex items-center justify-between">
           <div className="flex items-center space-x-2.5">
             <div className="p-2 bg-amber-500/20 text-amber-400 rounded-lg">
@@ -76,7 +90,7 @@ export default function PerdonarMultaModal({
             <div>
               <h3 className="font-bold text-base leading-tight">Rebaja o Perdón de Multa</h3>
               <p className="text-xs text-slate-400">
-                {cobro.unidades_cobro?.numero_identificador} • Multa actual: {cobro.monto_multa} Bs
+                {cobro.unidades_cobro?.numero_identificador} • {nombreSocio} • Multa: {multaBase} Bs
               </p>
             </div>
           </div>
@@ -88,7 +102,6 @@ export default function PerdonarMultaModal({
           </button>
         </div>
 
-        {/* Formulario */}
         <form onSubmit={handleConfirm} className="p-6 space-y-4">
           {errorMsg && (
             <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-xs text-red-700 flex items-start gap-2">
@@ -105,15 +118,12 @@ export default function PerdonarMultaModal({
               type="number"
               step="1"
               min="0"
-              max={cobro.monto_multa || 70}
+              max={multaBase || 70}
               required
               value={montoPerdonado}
               onChange={(e) => setMontoPerdonado(e.target.value)}
               className="w-full px-3 py-2 text-sm bg-slate-50 border border-slate-300 rounded-xl font-bold focus:ring-2 focus:ring-amber-500 focus:outline-none"
             />
-            <span className="text-[10px] text-slate-400">
-              Ingresa {cobro.monto_multa} Bs para condonación total, o un monto menor para descuento parcial.
-            </span>
           </div>
 
           <div>
@@ -125,12 +135,9 @@ export default function PerdonarMultaModal({
               required
               value={motivoPerdon}
               onChange={(e) => setMotivoPerdon(e.target.value)}
-              placeholder="Ej. Problema de salud justificado con certificado médico / Acuerdo verbal en asamblea..."
+              placeholder="Ej. Problema de salud justificado..."
               className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-300 rounded-xl focus:ring-2 focus:ring-amber-500 focus:outline-none"
             />
-            <span className="text-[10px] text-slate-400">
-              Quedará registrado para auditoría y rendición de cuentas.
-            </span>
           </div>
 
           <div className="pt-2 flex items-center justify-end gap-2.5 border-t border-slate-100">

@@ -1,6 +1,9 @@
 import React, { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
-import { Receipt, Coins, QrCode, Trash2, X, AlertCircle, CheckCircle2, RefreshCw, ExternalLink, ShieldAlert } from 'lucide-react'
+import { useAuth } from '../../context/AuthContext'
+import { registrarAuditoria } from '../../lib/auditoria'
+import { getNombreSocioCobro } from '../../lib/formatters'
+import { Receipt, Coins, QrCode, X, AlertCircle, CheckCircle2, RefreshCw, ExternalLink, ShieldAlert } from 'lucide-react'
 
 export default function HistorialPagosModal({
   isOpen,
@@ -8,6 +11,7 @@ export default function HistorialPagosModal({
   cobro,
   onPaymentUpdated,
 }) {
+  const { user } = useAuth()
   const [pagos, setPagos] = useState([])
   const [loading, setLoading] = useState(true)
   const [anulandoId, setAnulandoId] = useState(null)
@@ -47,6 +51,8 @@ export default function HistorialPagosModal({
 
   if (!isOpen || !cobro) return null
 
+  const nombreSocio = getNombreSocioCobro(cobro)
+
   const handleAnular = async (pagoId) => {
     if (!motivoAnulacion.trim()) {
       setErrorMsg('El motivo de anulación es obligatorio (regla de cero borrados).')
@@ -55,7 +61,6 @@ export default function HistorialPagosModal({
 
     try {
       setErrorMsg('')
-      // 1. Marcar pago como anulado con motivo escrito
       const { error: pError } = await supabase
         .from('pagos_servicios')
         .update({
@@ -66,7 +71,6 @@ export default function HistorialPagosModal({
 
       if (pError) throw pError
 
-      // 2. Recalcular total pagado activo del cobro
       const { data: activePagos, error: aError } = await supabase
         .from('pagos_servicios')
         .select('monto')
@@ -84,6 +88,16 @@ export default function HistorialPagosModal({
         .update({ estado: nuevoEstado })
         .eq('id', cobro.id)
 
+      await registrarAuditoria({
+        usuarioId: user?.id,
+        accion: 'ANULACION_PAGO_SERVICIO',
+        detalleJson: {
+          descripcion: `Anulación de pago de ${nombreSocio} (${cobro.unidades_cobro?.numero_identificador})`,
+          pago_id: pagoId,
+          motivo: motivoAnulacion.trim(),
+        },
+      })
+
       setSuccessMsg('Pago anulado correctamente con registro de auditoría.')
       setAnulandoId(null)
       setMotivoAnulacion('')
@@ -98,7 +112,6 @@ export default function HistorialPagosModal({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-sm overflow-y-auto animate-fadeIn">
       <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-lg my-8 overflow-hidden">
-        {/* Header */}
         <div className="bg-slate-900 px-6 py-4 text-white flex items-center justify-between">
           <div className="flex items-center space-x-2.5">
             <div className="p-2 bg-emerald-500/20 text-emerald-400 rounded-lg">
@@ -107,7 +120,7 @@ export default function HistorialPagosModal({
             <div>
               <h3 className="font-bold text-base leading-tight">Historial de Pagos</h3>
               <p className="text-xs text-slate-400">
-                {cobro.unidades_cobro?.numero_identificador} • {cobro.unidades_cobro?.socios?.nombre}
+                {cobro.unidades_cobro?.numero_identificador} • {nombreSocio}
               </p>
             </div>
           </div>
@@ -119,7 +132,6 @@ export default function HistorialPagosModal({
           </button>
         </div>
 
-        {/* Content */}
         <div className="p-6 space-y-4">
           {errorMsg && (
             <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-xs text-red-700 flex items-start gap-2">
@@ -220,22 +232,18 @@ export default function HistorialPagosModal({
                       </div>
                     )}
 
-                    {/* Formulario de Anulación con Motivo */}
                     {isThisAnulando && (
                       <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl space-y-2 text-xs">
                         <div className="flex items-center gap-1.5 text-amber-800 font-bold">
                           <ShieldAlert className="w-4 h-4 text-amber-600" />
                           <span>Anulación con Motivo Obligatorio</span>
                         </div>
-                        <p className="text-[11px] text-amber-700">
-                          El pago quedará tachado en el historial y se descontará del saldo sin eliminarse de la base de datos.
-                        </p>
                         <input
                           type="text"
                           required
                           value={motivoAnulacion}
                           onChange={(e) => setMotivoAnulacion(e.target.value)}
-                          placeholder="Escribe el motivo de la anulación (ej. Error en monto digitado)..."
+                          placeholder="Escribe el motivo de la anulación..."
                           className="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs focus:ring-2 focus:ring-red-500 focus:outline-none"
                         />
                         <div className="flex items-center justify-end gap-2 pt-1">
@@ -249,7 +257,7 @@ export default function HistorialPagosModal({
                           <button
                             type="button"
                             onClick={() => handleAnular(pago.id)}
-                            className="px-3 py-1 bg-red-600 hover:bg-red-700 text-white rounded-lg font-bold text-[11px] transition-colors"
+                            className="px-3 py-1 bg-red-600 hover:bg-red-700 text-white rounded-lg text-[11px] font-bold"
                           >
                             Confirmar Anulación
                           </button>
@@ -261,16 +269,6 @@ export default function HistorialPagosModal({
               })}
             </div>
           )}
-
-          <div className="pt-2 border-t border-slate-100 flex justify-end">
-            <button
-              type="button"
-              onClick={onClose}
-              className="px-4 py-2 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-xl transition-colors"
-            >
-              Cerrar
-            </button>
-          </div>
         </div>
       </div>
     </div>

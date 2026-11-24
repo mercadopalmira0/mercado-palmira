@@ -1,48 +1,77 @@
 /**
  * Motor de Cálculos Consolidados de Rendición de Cuentas
  * Secretaría de Hacienda - Mercado Palmira
- * 
- * Permite consolidar cualquier rango (Trimestre, Cuatrimestre, Semestre o Año)
- * separando estrictamente Caja Servicios y Caja Afiliaciones.
+ *
+ * Consolida cualquier rango (Trimestre, Cuatrimestre, Semestre o Año)
+ * separando estrictamente Caja Servicios y Caja Afiliaciones,
+ * incluyendo deudores de ciclos, aportantes externos y cumplimiento de puestos.
  */
+import { getNombreSocioCobro } from './formatters'
+
+function parseFecha(val) {
+  if (!val) return null
+  if (val instanceof Date) return val
+  const s = String(val)
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+    const [y, m, d] = s.split('-').map(Number)
+    return new Date(y, m - 1, d, 12, 0, 0, 0)
+  }
+  return new Date(s)
+}
 
 export function calcularConsolidadoRendicion({
   mesInicio,
   anioInicio,
   mesFin,
   anioFin,
+  ciclosHacienda = [],
   saldosIniciales = [],
   pagosServicios = [],
   pagosAfiliacion = [],
+  pagosDeudoresCiclos = [],
+  cobrosExternos = [],
   egresos = [],
   movimientosInternos = [],
   cobrosServicios = [],
   afiliaciones = [],
+  unidadesCobro = [],
 }) {
   // 1. Fechas límite del rango
   const fechaInicio = new Date(anioInicio, mesInicio - 1, 1, 0, 0, 0, 0)
   const fechaFin = new Date(anioFin, mesFin, 0, 23, 59, 59, 999)
 
-  // 2. Saldos Anteriores (antes de fechaInicio)
+  // 2. Saldos Anteriores (desde el ciclo inicial en ciclos_hacienda o saldos_iniciales + transacciones previas a fechaInicio)
   let antServiciosEf = 0
   let antServiciosQr = 0
   let antAfiliacionesEf = 0
   let antAfiliacionesQr = 0
 
-  saldosIniciales.forEach((s) => {
-    const m = parseFloat(s.monto_inicial) || 0
-    if (s.caja === 'servicios') {
-      if (s.metodo_pago === 'efectivo') antServiciosEf += m
-      if (s.metodo_pago === 'qr') antServiciosQr += m
-    } else if (s.caja === 'afiliaciones') {
-      if (s.metodo_pago === 'efectivo') antAfiliacionesEf += m
-      if (s.metodo_pago === 'qr') antAfiliacionesQr += m
-    }
-  })
+  const cicloInicial =
+    ciclosHacienda.find((c) => c.es_inicial) ||
+    [...ciclosHacienda].sort((a, b) => new Date(a.created_at) - new Date(b.created_at))[0] ||
+    null
+
+  if (cicloInicial) {
+    antServiciosEf = parseFloat(cicloInicial.servicios_efectivo_inicial) || 0
+    antServiciosQr = parseFloat(cicloInicial.servicios_qr_inicial) || 0
+    antAfiliacionesEf = parseFloat(cicloInicial.afiliaciones_efectivo_inicial) || 0
+    antAfiliacionesQr = parseFloat(cicloInicial.afiliaciones_qr_inicial) || 0
+  } else {
+    saldosIniciales.forEach((s) => {
+      const m = parseFloat(s.monto_inicial) || 0
+      if (s.caja === 'servicios') {
+        if (s.metodo_pago === 'efectivo') antServiciosEf += m
+        if (s.metodo_pago === 'qr') antServiciosQr += m
+      } else if (s.caja === 'afiliaciones') {
+        if (s.metodo_pago === 'efectivo') antAfiliacionesEf += m
+        if (s.metodo_pago === 'qr') antAfiliacionesQr += m
+      }
+    })
+  }
 
   // Transacciones previas a la fecha de inicio
   pagosServicios
-    .filter((p) => p.estado === 'activo' && new Date(p.fecha_pago) < fechaInicio)
+    .filter((p) => p.estado === 'activo' && parseFecha(p.fecha_pago) < fechaInicio)
     .forEach((p) => {
       const m = parseFloat(p.monto) || 0
       if (p.metodo_pago === 'efectivo') antServiciosEf += m
@@ -50,15 +79,37 @@ export function calcularConsolidadoRendicion({
     })
 
   pagosAfiliacion
-    .filter((p) => p.estado === 'activo' && new Date(p.fecha_pago) < fechaInicio)
+    .filter((p) => p.estado === 'activo' && parseFecha(p.fecha_pago) < fechaInicio)
     .forEach((p) => {
       const m = parseFloat(p.monto) || 0
       if (p.metodo_pago === 'efectivo') antAfiliacionesEf += m
       if (p.metodo_pago === 'qr') antAfiliacionesQr += m
     })
 
+  pagosDeudoresCiclos
+    .filter((p) => !p.anulado && parseFecha(p.fecha_pago) < fechaInicio)
+    .forEach((p) => {
+      const m = parseFloat(p.monto) || 0
+      const caja = p.deudores_ciclos?.caja || p.caja || 'servicios'
+      if (caja === 'servicios') {
+        if (p.metodo_pago === 'efectivo') antServiciosEf += m
+        if (p.metodo_pago === 'qr') antServiciosQr += m
+      } else if (caja === 'afiliaciones') {
+        if (p.metodo_pago === 'efectivo') antAfiliacionesEf += m
+        if (p.metodo_pago === 'qr') antAfiliacionesQr += m
+      }
+    })
+
+  cobrosExternos
+    .filter((c) => !c.anulado && parseFecha(c.fecha_pago) < fechaInicio)
+    .forEach((c) => {
+      const m = parseFloat(c.monto_pagado) || 0
+      if (c.metodo_pago === 'efectivo') antServiciosEf += m
+      if (c.metodo_pago === 'qr') antServiciosQr += m
+    })
+
   egresos
-    .filter((e) => e.estado === 'activo' && new Date(e.fecha) < fechaInicio)
+    .filter((e) => e.estado === 'activo' && parseFecha(e.fecha) < fechaInicio)
     .forEach((e) => {
       const m = parseFloat(e.monto) || 0
       if (e.caja === 'servicios') {
@@ -71,7 +122,7 @@ export function calcularConsolidadoRendicion({
     })
 
   movimientosInternos
-    .filter((m) => m.estado === 'activo' && new Date(m.fecha) < fechaInicio)
+    .filter((m) => m.estado === 'activo' && parseFecha(m.fecha) < fechaInicio)
     .forEach((m) => {
       const monto = parseFloat(m.monto) || 0
       if (m.tipo === 'retiro_qr_a_efectivo') {
@@ -101,37 +152,86 @@ export function calcularConsolidadoRendicion({
   // 3. Transacciones DENTRO del Rango Seleccionado
   const pagosServiciosRango = pagosServicios.filter((p) => {
     if (p.estado !== 'activo') return false
-    const f = new Date(p.fecha_pago)
+    const f = parseFecha(p.fecha_pago)
     return f >= fechaInicio && f <= fechaFin
   })
 
-  let ingServiciosEf = 0
-  let ingServiciosQr = 0
+  let ingServiciosRegularesEf = 0
+  let ingServiciosRegularesQr = 0
   pagosServiciosRango.forEach((p) => {
     const m = parseFloat(p.monto) || 0
-    if (p.metodo_pago === 'efectivo') ingServiciosEf += m
-    if (p.metodo_pago === 'qr') ingServiciosQr += m
+    if (p.metodo_pago === 'efectivo') ingServiciosRegularesEf += m
+    if (p.metodo_pago === 'qr') ingServiciosRegularesQr += m
   })
+
+  // Aportantes Externos (Guardia y Agua) dentro del rango
+  const cobrosExternosRango = cobrosExternos.filter((c) => {
+    if (c.anulado) return false
+    const f = parseFecha(c.fecha_pago)
+    return f >= fechaInicio && f <= fechaFin
+  })
+
+  let ingExternosEf = 0
+  let ingExternosQr = 0
+  cobrosExternosRango.forEach((c) => {
+    const m = parseFloat(c.monto_pagado) || 0
+    if (c.metodo_pago === 'efectivo') ingExternosEf += m
+    if (c.metodo_pago === 'qr') ingExternosQr += m
+  })
+  const totalIngExternos = ingExternosEf + ingExternosQr
+
+  // Pagos de Deudores de Ciclos Anteriores dentro del rango
+  const pagosDeudoresRango = pagosDeudoresCiclos.filter((p) => {
+    if (p.anulado) return false
+    const f = parseFecha(p.fecha_pago)
+    return f >= fechaInicio && f <= fechaFin
+  })
+
+  let ingDeudoresServiciosEf = 0
+  let ingDeudoresServiciosQr = 0
+  let ingDeudoresAfiliacionesEf = 0
+  let ingDeudoresAfiliacionesQr = 0
+
+  pagosDeudoresRango.forEach((p) => {
+    const m = parseFloat(p.monto) || 0
+    const caja = p.deudores_ciclos?.caja || p.caja || 'servicios'
+    if (caja === 'servicios') {
+      if (p.metodo_pago === 'efectivo') ingDeudoresServiciosEf += m
+      if (p.metodo_pago === 'qr') ingDeudoresServiciosQr += m
+    } else if (caja === 'afiliaciones') {
+      if (p.metodo_pago === 'efectivo') ingDeudoresAfiliacionesEf += m
+      if (p.metodo_pago === 'qr') ingDeudoresAfiliacionesQr += m
+    }
+  })
+
+  const totalIngDeudoresServicios = ingDeudoresServiciosEf + ingDeudoresServiciosQr
+  const totalIngDeudoresAfiliaciones = ingDeudoresAfiliacionesEf + ingDeudoresAfiliacionesQr
+
+  const ingServiciosEf = ingServiciosRegularesEf + ingExternosEf + ingDeudoresServiciosEf
+  const ingServiciosQr = ingServiciosRegularesQr + ingExternosQr + ingDeudoresServiciosQr
   const totalIngServicios = ingServiciosEf + ingServiciosQr
 
   const pagosAfiliacionRango = pagosAfiliacion.filter((p) => {
     if (p.estado !== 'activo') return false
-    const f = new Date(p.fecha_pago)
+    const f = parseFecha(p.fecha_pago)
     return f >= fechaInicio && f <= fechaFin
   })
 
-  let ingAfiliacionesEf = 0
-  let ingAfiliacionesQr = 0
+  let ingAfiliacionesRegularesEf = 0
+  let ingAfiliacionesRegularesQr = 0
   pagosAfiliacionRango.forEach((p) => {
     const m = parseFloat(p.monto) || 0
-    if (p.metodo_pago === 'efectivo') ingAfiliacionesEf += m
-    if (p.metodo_pago === 'qr') ingAfiliacionesQr += m
+    if (p.metodo_pago === 'efectivo') ingAfiliacionesRegularesEf += m
+    if (p.metodo_pago === 'qr') ingAfiliacionesRegularesQr += m
   })
+
+  const ingAfiliacionesEf = ingAfiliacionesRegularesEf + ingDeudoresAfiliacionesEf
+  const ingAfiliacionesQr = ingAfiliacionesRegularesQr + ingDeudoresAfiliacionesQr
   const totalIngAfiliaciones = ingAfiliacionesEf + ingAfiliacionesQr
 
   const egresosRango = egresos.filter((e) => {
     if (e.estado !== 'activo') return false
-    const f = new Date(e.fecha)
+    const f = parseFecha(e.fecha)
     return f >= fechaInicio && f <= fechaFin
   })
 
@@ -162,7 +262,7 @@ export function calcularConsolidadoRendicion({
 
   const movimientosRango = movimientosInternos.filter((m) => {
     if (m.estado !== 'activo') return false
-    const f = new Date(m.fecha)
+    const f = parseFecha(m.fecha)
     return f >= fechaInicio && f <= fechaFin
   })
 
@@ -210,12 +310,11 @@ export function calcularConsolidadoRendicion({
   const totalQrFinal = finServiciosQr + finAfiliacionesQr
   const granTotalFinal = totalEfectivoFinal + totalQrFinal
 
-  // 5. Deudores al corte del rango
+  // 5. Deudores al corte del rango (respetando socio histórico tras traspasos)
   const deudoresServicios = cobrosServicios
     .filter((c) => {
       const periodo = c.periodos_mensuales
       if (!periodo) return false
-      // Periodos incluidos en o hasta el fin del rango
       const pDate = new Date(periodo.anio, periodo.mes - 1, 1)
       if (pDate > fechaFin) return false
 
@@ -228,7 +327,10 @@ export function calcularConsolidadoRendicion({
       const totalPagado = pagosActivos.reduce((s, p) => s + (parseFloat(p.monto) || 0), 0)
       const saldo = Math.max(0, (c.total_a_pagar || 0) - totalPagado)
       return {
-        socio: c.unidades_cobro?.socios?.nombre || 'Sin socio',
+        cobroId: c.id,
+        unidadId: c.unidad_id,
+        socioId: c.socio_id_historico || c.unidades_cobro?.socio_responsable_id || c.unidades_cobro?.socios?.id || null,
+        socio: getNombreSocioCobro(c),
         telefono: c.unidades_cobro?.socios?.telefono || '',
         puesto: c.unidades_cobro?.numero_identificador || '',
         periodo: `${c.periodos_mensuales?.mes}/${c.periodos_mensuales?.anio}`,
@@ -240,11 +342,13 @@ export function calcularConsolidadoRendicion({
     })
 
   const deudoresAfiliaciones = afiliaciones
-    .filter((a) => (parseFloat(a.saldo_pendiente) || 0) > 0)
+    .filter((a) => (parseFloat(a.saldo_pendiente) || 0) > 0 && a.estado !== 'anulada')
     .map((a) => {
       const pagosActivos = (a.pagos_afiliacion || []).filter((p) => p.estado === 'activo')
       const totalPagado = pagosActivos.reduce((s, p) => s + (parseFloat(p.monto) || 0), 0)
       return {
+        afiliacionId: a.id,
+        socioId: a.socio_id || a.socios?.id || null,
         socio: a.socios?.nombre || 'Sin socio',
         telefono: a.socios?.telefono || '',
         totalPlan: a.monto_total || 1500,
@@ -253,6 +357,72 @@ export function calcularConsolidadoRendicion({
         saldoPendiente: a.saldo_pendiente || 0,
       }
     })
+
+  // 6. Resumen de Cumplimiento de Puestos en el Rango
+  const unidadesActivas = (unidadesCobro || []).filter((u) => u.activo !== false)
+  const totalPuestosActivos = unidadesActivas.reduce(
+    (sum, u) => sum + (parseInt(u.cantidad_puestos, 10) || 1),
+    0
+  )
+  const sociosRepresentadosSet = new Set(
+    unidadesActivas.map((u) => u.socio_responsable_id).filter(Boolean)
+  )
+  const totalSociosActivos = sociosRepresentadosSet.size
+
+  const cobrosEnRango = cobrosServicios.filter((c) => {
+    const p = c.periodos_mensuales
+    if (!p) return false
+    const pDate = new Date(p.anio, p.mes - 1, 1)
+    return pDate >= fechaInicio && pDate <= fechaFin
+  })
+
+  // Agrupar cobros del rango por unidad de cobro
+  const porUnidad = new Map()
+  cobrosEnRango.forEach((c) => {
+    const key = c.unidad_id || c.id
+    if (!porUnidad.has(key)) {
+      porUnidad.set(key, {
+        puestos: parseInt(c.cantidad_puestos_aplicada, 10) || parseInt(c.unidades_cobro?.cantidad_puestos, 10) || 1,
+        totalAPagar: 0,
+        totalPagado: 0,
+      })
+    }
+    const entry = porUnidad.get(key)
+    entry.totalAPagar += parseFloat(c.total_a_pagar) || 0
+    const pagadoCobro = (c.pagos_servicios || [])
+      .filter((p) => p.estado === 'activo')
+      .reduce((s, p) => s + (parseFloat(p.monto) || 0), 0)
+    entry.totalPagado += pagadoCobro
+  })
+
+  let puestosPagados = 0
+  let puestosParciales = 0
+  let puestosPendientes = 0
+
+  porUnidad.forEach((entry) => {
+    if (entry.totalPagado >= entry.totalAPagar && entry.totalAPagar > 0) {
+      puestosPagados += entry.puestos
+    } else if (entry.totalPagado > 0) {
+      puestosParciales += entry.puestos
+    } else {
+      puestosPendientes += entry.puestos
+    }
+  })
+
+  const totalPuestosEvaluados = puestosPagados + puestosParciales + puestosPendientes
+  const baseCumplimiento = totalPuestosEvaluados > 0 ? totalPuestosEvaluados : totalPuestosActivos
+  const porcentajeCumplimiento =
+    baseCumplimiento > 0 ? Math.round((puestosPagados / baseCumplimiento) * 1000) / 10 : 0
+
+  const cumplimientoPuestos = {
+    totalPuestosActivos,
+    totalSociosActivos,
+    totalPuestosEvaluados,
+    puestosPagados,
+    puestosParciales,
+    puestosPendientes,
+    porcentajeCumplimiento,
+  }
 
   return {
     fechaInicio,
@@ -266,7 +436,18 @@ export function calcularConsolidadoRendicion({
     totalAntAfiliaciones: antAfiliacionesEf + antAfiliacionesQr,
     totalAntGeneral: antServiciosEf + antServiciosQr + antAfiliacionesEf + antAfiliacionesQr,
 
-    // Ingresos rango
+    // Ingresos rango (con desglose de externos y deudores)
+    ingServiciosRegularesEf,
+    ingServiciosRegularesQr,
+    ingExternosEf,
+    ingExternosQr,
+    totalIngExternos,
+    ingDeudoresServiciosEf,
+    ingDeudoresServiciosQr,
+    totalIngDeudoresServicios,
+    ingDeudoresAfiliacionesEf,
+    ingDeudoresAfiliacionesQr,
+    totalIngDeudoresAfiliaciones,
     ingServiciosEf,
     ingServiciosQr,
     totalIngServicios,
@@ -303,9 +484,14 @@ export function calcularConsolidadoRendicion({
     totalQrFinal,
     granTotalFinal,
 
+    // Cumplimiento
+    cumplimientoPuestos,
+
     // Listas
     pagosServiciosRango,
     pagosAfiliacionRango,
+    pagosDeudoresRango,
+    cobrosExternosRango,
     egresosRango,
     movimientosRango,
     deudoresServicios,

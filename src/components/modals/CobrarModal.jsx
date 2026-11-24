@@ -1,18 +1,21 @@
 import React, { useState } from 'react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
+import { registrarAuditoria } from '../../lib/auditoria'
+import { getNombreSocioCobro } from '../../lib/formatters'
 import FotoUploaderModal from './FotoUploaderModal'
-import { Receipt, Coins, QrCode, CheckCircle2, AlertCircle, X, Camera, FileText, ExternalLink } from 'lucide-react'
+import { Receipt, Coins, QrCode, CheckCircle2, AlertCircle, X, Camera, ExternalLink, Sparkles } from 'lucide-react'
 
 export default function CobrarModal({
   isOpen,
   onClose,
   cobro,
+  perdonazoActivo = null,
   onPaymentSuccess,
 }) {
   const { user } = useAuth()
   const [monto, setMonto] = useState('')
-  const [metodoPago, setMetodoPago] = useState('efectivo') // 'efectivo' | 'qr'
+  const [metodoPago, setMetodoPago] = useState('efectivo')
   const [nroTalonarioFisico, setNroTalonarioFisico] = useState('')
   const [comprobanteUrl, setComprobanteUrl] = useState('')
   const [saving, setSaving] = useState(false)
@@ -20,23 +23,30 @@ export default function CobrarModal({
   const [successMsg, setSuccessMsg] = useState('')
   const [isPhotoModalOpen, setIsPhotoModalOpen] = useState(false)
 
+  const totalAPagar = cobro ? cobro.totalAPagar ?? cobro.total_a_pagar ?? 0 : 0
+  const totalPagado = cobro
+    ? cobro.totalPagado ??
+      (cobro.pagos_servicios || [])
+        .filter((p) => p.estado === 'activo')
+        .reduce((s, p) => s + (parseFloat(p.monto) || 0), 0)
+    : 0
+  const saldoPendiente = Math.max(0, totalAPagar - totalPagado)
+
   React.useEffect(() => {
     if (isOpen && cobro) {
-      const saldo = Math.max(0, (cobro.total_a_pagar || 0) - (cobro.total_pagado || 0))
-      setMonto(saldo > 0 ? saldo.toFixed(2) : '')
+      setMonto(saldoPendiente > 0 ? saldoPendiente.toFixed(2) : '')
       setMetodoPago('efectivo')
       setNroTalonarioFisico('')
       setComprobanteUrl('')
       setErrorMsg('')
       setSuccessMsg('')
     }
-  }, [isOpen, cobro])
+  }, [isOpen, cobro, saldoPendiente])
 
   if (!isOpen || !cobro) return null
 
-  const totalAPagar = cobro.total_a_pagar || 0
-  const totalPagado = cobro.total_pagado || 0
-  const saldoPendiente = Math.max(0, totalAPagar - totalPagado)
+  const nombreSocio = getNombreSocioCobro(cobro)
+  const aplicaPerdonazo = Boolean(perdonazoActivo && (cobro.descuentoPerdonazo || 0) > 0)
 
   const handleRegisterPayment = async (e) => {
     e.preventDefault()
@@ -51,7 +61,6 @@ export default function CobrarModal({
     setSuccessMsg('')
 
     try {
-      // 1. Insertar en pagos_servicios
       const { error: pagoError } = await supabase.from('pagos_servicios').insert([
         {
           cobro_id: cobro.id,
@@ -66,19 +75,49 @@ export default function CobrarModal({
 
       if (pagoError) throw pagoError
 
-      // 2. Actualizar estado del cobro
       const nuevoTotalPagado = totalPagado + montoNum
       const nuevoSaldo = totalAPagar - nuevoTotalPagado
       const nuevoEstado = nuevoSaldo <= 0 ? 'pagado' : 'parcial'
 
+      const cobroUpdate = {
+        estado: nuevoEstado,
+        monto_multa: cobro.montoMulta ?? cobro.monto_multa ?? 0,
+        total_a_pagar: totalAPagar,
+      }
+
+      if (aplicaPerdonazo) {
+        const nuevaMultaPerdonada = (parseFloat(cobro.multaPerdonada) || 0) + (cobro.descuentoPerdonazo || 0)
+        cobroUpdate.multa_perdonada = nuevaMultaPerdonada
+        cobroUpdate.motivo_perdon_multa = [
+          cobro.motivo_perdon_multa,
+          `Perdonazo "${perdonazoActivo.nombre}" (-${perdonazoActivo.porcentaje_descuento}%)`,
+        ]
+          .filter(Boolean)
+          .join(' | ')
+      }
+
       const { error: cobroError } = await supabase
         .from('cobros_servicios')
-        .update({
-          estado: nuevoEstado,
-        })
+        .update(cobroUpdate)
         .eq('id', cobro.id)
 
       if (cobroError) throw cobroError
+
+      if (aplicaPerdonazo) {
+        await registrarAuditoria({
+          usuarioId: user?.id,
+          accion: 'APLICACION_PERDONAZO_COBRO',
+          detalleJson: {
+            descripcion: `Perdonazo "${perdonazoActivo.nombre}" (-${perdonazoActivo.porcentaje_descuento}%) aplicado a ${nombreSocio} (${cobro.unidades_cobro?.numero_identificador})`,
+            cobro_id: cobro.id,
+            campania: perdonazoActivo.nombre,
+            porcentaje: perdonazoActivo.porcentaje_descuento,
+            multa_original: cobro.montoMulta,
+            descuento_aplicado: cobro.descuentoPerdonazo,
+            multa_final: cobro.multaNeta,
+          },
+        })
+      }
 
       setSuccessMsg('¡Pago registrado con éxito!')
       if (onPaymentSuccess) onPaymentSuccess()
@@ -96,7 +135,6 @@ export default function CobrarModal({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-sm overflow-y-auto animate-fadeIn">
       <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-md my-8 overflow-hidden">
-        {/* Header */}
         <div className="bg-slate-900 px-6 py-4 text-white flex items-center justify-between">
           <div className="flex items-center space-x-2.5">
             <div className="p-2 bg-emerald-500/20 text-emerald-400 rounded-lg">
@@ -105,7 +143,7 @@ export default function CobrarModal({
             <div>
               <h3 className="font-bold text-base leading-tight">Registrar Cobro de Servicios</h3>
               <p className="text-xs text-slate-400">
-                {cobro.unidades_cobro?.numero_identificador} • {cobro.unidades_cobro?.socios?.nombre}
+                {cobro.unidades_cobro?.numero_identificador} • {nombreSocio}
               </p>
             </div>
           </div>
@@ -117,7 +155,27 @@ export default function CobrarModal({
           </button>
         </div>
 
-        {/* Resumen de la deuda */}
+        {/* Banner de Perdonazo en Modal */}
+        {perdonazoActivo && (
+          <div className="bg-purple-50 border-b border-purple-200 px-5 py-3 text-xs text-purple-900 flex items-start gap-2">
+            <Sparkles className="w-4 h-4 text-purple-600 flex-shrink-0 mt-0.5" />
+            <div>
+              <p className="font-bold">
+                Perdonazo Activo: {perdonazoActivo.nombre} (-{perdonazoActivo.porcentaje_descuento}% en multas)
+              </p>
+              {aplicaPerdonazo ? (
+                <p className="text-purple-700 mt-0.5">
+                  Multa original: <span className="line-through">{cobro.montoMulta.toFixed(2)} Bs</span>{' '}
+                  ➔ Con perdonazo: <strong>{cobro.multaNeta.toFixed(2)} Bs</strong> (Ahorro:{' '}
+                  {cobro.descuentoPerdonazo.toFixed(2)} Bs)
+                </p>
+              ) : (
+                <p className="text-purple-700 mt-0.5">Este cobro no tiene multa pendiente.</p>
+              )}
+            </div>
+          </div>
+        )}
+
         <div className="bg-slate-50 p-4 border-b border-slate-200 grid grid-cols-3 gap-2 text-center text-xs">
           <div>
             <span className="text-[10px] text-slate-400 uppercase font-semibold">Total a Pagar</span>
@@ -133,7 +191,6 @@ export default function CobrarModal({
           </div>
         </div>
 
-        {/* Formulario */}
         <form onSubmit={handleRegisterPayment} className="p-6 space-y-4">
           {errorMsg && (
             <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-xs text-red-700 flex items-start gap-2">
@@ -149,7 +206,6 @@ export default function CobrarModal({
             </div>
           )}
 
-          {/* Monto a Cobrar */}
           <div>
             <label className="block text-xs font-semibold text-slate-700 mb-1">
               Monto a Cobrar (Bs) <span className="text-red-500">*</span>
@@ -178,7 +234,6 @@ export default function CobrarModal({
             </div>
           </div>
 
-          {/* Método de Pago */}
           <div>
             <label className="block text-xs font-semibold text-slate-700 mb-1.5">Método de Pago</label>
             <div className="grid grid-cols-2 gap-3">
@@ -210,7 +265,6 @@ export default function CobrarModal({
             </div>
           </div>
 
-          {/* N° Talonario Físico */}
           <div>
             <label className="block text-xs font-semibold text-slate-700 mb-1">
               N° Recibo Talonario Físico (Opcional)
@@ -222,10 +276,8 @@ export default function CobrarModal({
               placeholder="Ej. Recibo 0452"
               className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:outline-none"
             />
-            <span className="text-[10px] text-slate-400">Para cruce con el talonario de papel entregado al socio</span>
           </div>
 
-          {/* Comprobante / Foto */}
           <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-xs">
             <span className="text-slate-600">Foto de Comprobante (Drive):</span>
             <div className="flex items-center space-x-2">
@@ -250,7 +302,6 @@ export default function CobrarModal({
             </div>
           </div>
 
-          {/* Botones */}
           <div className="pt-3 flex items-center justify-end gap-2.5 border-t border-slate-100">
             <button
               type="button"
