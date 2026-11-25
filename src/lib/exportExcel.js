@@ -1,5 +1,5 @@
 /**
- * Exportador de Rendición de Cuentas a Excel (.xlsx) con SheetJS
+ * Exportador de Rendición de Cuentas y Matrices a Excel (.xlsx) con SheetJS
  * Secretaría de Hacienda - Mercado Palmira
  */
 import * as XLSX from 'xlsx'
@@ -34,7 +34,7 @@ function formatMoneyColumns(ws, colIndices, startRow = 1, endRow = null) {
   }
 }
 
-export function descargarRendicionExcel(consolidado, metadata = {}) {
+function getMetadataLabels(consolidado, metadata = {}) {
   const {
     mesInicio,
     anioInicio,
@@ -44,23 +44,241 @@ export function descargarRendicionExcel(consolidado, metadata = {}) {
     fechaEmision = new Date().toLocaleDateString('es-BO'),
   } = metadata
 
-  const wb = XLSX.utils.book_new()
-  const cp = consolidado.cumplimientoPuestos || {}
-  const di = consolidado.desgloseInternoServicios || {}
-  const rm = consolidado.resumenMora || {}
   const fechaCorteLabel = fechaCorte
     ? formatFechaDMY(fechaCorte)
     : consolidado.fechaFin
       ? new Date(consolidado.fechaFin).toLocaleDateString('es-BO')
       : ''
 
+  return {
+    mesInicio,
+    anioInicio,
+    mesFin,
+    anioFin,
+    fechaCorteLabel,
+    fechaEmision,
+  }
+}
+
+/**
+ * Construye y agrega las hojas `Matriz_Cobranza` y `Deudores_Consolidado` al libro Excel.
+ */
+function appendMatricesSheets(wb, consolidado, labels) {
+  const mp = consolidado.matrizPeriodo || {
+    meses: [],
+    filasSocios: [],
+    filasExternos: [],
+    totalesSocios: { porMes: {}, totalPagado: 0, totalEsperado: 0, diferencia: 0 },
+    totalesExternos: { porMes: {}, totalPagado: 0, totalEsperado: 0, diferencia: 0 },
+    totalesGenerales: { porMes: {}, totalPagado: 0, totalEsperado: 0, diferencia: 0 },
+  }
+  const md = consolidado.matrizDeudores || {
+    resumenPorDeudor: [],
+    detalleDeudas: [],
+    totales: {
+      deudaPeriodoActual: 0,
+      deudaAnterior: 0,
+      multas: 0,
+      totalACobrar: 0,
+      cantidadItems: 0,
+      totalEsperadoDetalle: 0,
+      totalAbonadoDetalle: 0,
+    },
+  }
+
+  // Hoja Matriz_Cobranza
+  const mesCols = mp.meses.map((m) => `${m.label} (Bs)`)
+  const matrizHeader = [
+    'N° Puesto',
+    'Titular / Responsable',
+    'Integrantes / Registro',
+    ...mesCols,
+    'Total Pagado (Bs)',
+    'Total Esperado (Bs)',
+    'Diferencia (Bs)',
+    'Estado',
+  ]
+
+  const mapFilaMatriz = (f) => [
+    f.puesto,
+    f.titular,
+    f.integrantes,
+    ...mp.meses.map((m) => round2(f.pagosPorMes[m.key] || 0)),
+    round2(f.totalPagado),
+    round2(f.totalEsperado),
+    round2(f.diferencia),
+    f.estado,
+  ]
+
+  const mapSubtotalMatriz = (titulo, subLabel, tot) => [
+    titulo,
+    subLabel,
+    '',
+    ...mp.meses.map((m) => round2(tot.porMes[m.key] || 0)),
+    round2(tot.totalPagado),
+    round2(tot.totalEsperado),
+    round2(tot.diferencia),
+    '',
+  ]
+
+  const sociosRows = mp.filasSocios.map(mapFilaMatriz)
+  const externosRows = mp.filasExternos.map(mapFilaMatriz)
+
+  const matrizAoa = [
+    ['SECRETARÍA DE HACIENDA - MERCADO PALMIRA'],
+    [`MATRIZ DE CONTROL DE COBRANZA — SOLO PERIODO (${labels.mesInicio}/${labels.anioInicio} a ${labels.mesFin}/${labels.anioFin})`],
+    [`Fecha de Corte de Caja: ${labels.fechaCorteLabel} | Emisión: ${labels.fechaEmision}`],
+    [],
+    matrizHeader,
+    ...sociosRows,
+    mapSubtotalMatriz('SUBTOTAL SOCIOS / GRUPOS', `${sociosRows.length} unidades`, mp.totalesSocios),
+    [],
+    ['APORTANTES EXTERNOS (OTRA ASOCIACIÓN)'],
+    ...externosRows,
+    mapSubtotalMatriz('SUBTOTAL EXTERNOS', `${externosRows.length} aportantes`, mp.totalesExternos),
+    [],
+    mapSubtotalMatriz(
+      'TOTAL GENERAL COBRANZA PERIODO',
+      `${sociosRows.length + externosRows.length} registros`,
+      mp.totalesGenerales
+    ),
+  ]
+
+  const wsMatriz = XLSX.utils.aoa_to_sheet(matrizAoa)
+  const moneyStartCol = 3
+  const moneyEndCol = 3 + mp.meses.length + 2
+  const moneyColsMatriz = []
+  for (let c = moneyStartCol; c <= moneyEndCol; c += 1) moneyColsMatriz.push(c)
+  formatMoneyColumns(wsMatriz, moneyColsMatriz, 5)
+
+  wsMatriz['!cols'] = [
+    { wch: 22 },
+    { wch: 26 },
+    { wch: 36 },
+    ...mp.meses.map(() => ({ wch: 16 })),
+    { wch: 17 },
+    { wch: 18 },
+    { wch: 15 },
+    { wch: 12 },
+  ]
+  XLSX.utils.book_append_sheet(wb, wsMatriz, 'Matriz_Cobranza')
+
+  // Hoja Deudores_Consolidado (Matriz Resumen arriba + Detalle completo abajo)
+  const resumenDeudoresHeader = [
+    'N° Puesto / Ref',
+    'Nombre del Deudor',
+    'Teléfono',
+    'Deuda Periodo Actual (Bs)',
+    'Deuda Anterior / Heredada (Bs)',
+    'Multas (Bs)',
+    'TOTAL A COBRAR (Bs)',
+    'Cant. Ítems',
+  ]
+  const resumenDeudoresRows = md.resumenPorDeudor.map((d) => [
+    d.puestoRef,
+    d.nombre,
+    d.telefono,
+    round2(d.deudaPeriodoActual),
+    round2(d.deudaAnterior),
+    round2(d.multas),
+    round2(d.totalACobrar),
+    d.cantidadItems,
+  ])
+
+  const detalleDeudoresHeader = [
+    'Nombre',
+    'Puesto',
+    'Origen',
+    'Periodo / Detalle',
+    'Monto Esperado (Bs)',
+    'Abonado (Bs)',
+    'Saldo Pendiente (Bs)',
+    'Multa (Bs)',
+  ]
+  const detalleDeudoresRows = md.detalleDeudas.map((d) => [
+    d.nombre,
+    d.puesto,
+    d.origen,
+    d.detalle,
+    round2(d.montoEsperado),
+    round2(d.abonado),
+    round2(d.saldoPendiente),
+    round2(d.multa),
+  ])
+
+  const startDetalleHeaderRow = 6 + resumenDeudoresRows.length + 3
+  const deudoresConsAoa = [
+    ['SECRETARÍA DE HACIENDA - MERCADO PALMIRA'],
+    ['MATRIZ CONSOLIDADA DE TODOS LOS DEUDORES (PERIODO ACTUAL + DEUDAS ANTERIORES)'],
+    [`Periodo Evaluado: ${labels.mesInicio}/${labels.anioInicio} a ${labels.mesFin}/${labels.anioFin} | Corte: ${labels.fechaCorteLabel}`],
+    [],
+    ['A. MATRIZ RESUMEN POR DEUDOR'],
+    resumenDeudoresHeader,
+    ...resumenDeudoresRows,
+    [
+      'TOTALES RESUMEN',
+      `${resumenDeudoresRows.length} deudores`,
+      '',
+      round2(md.totales.deudaPeriodoActual),
+      round2(md.totales.deudaAnterior),
+      round2(md.totales.multas),
+      round2(md.totales.totalACobrar),
+      md.totales.cantidadItems,
+    ],
+    [],
+    ['B. DETALLE DE CONCEPTOS IMPAGOS POR DEUDOR'],
+    detalleDeudoresHeader,
+    ...detalleDeudoresRows,
+    [
+      'TOTALES DETALLE',
+      '',
+      '',
+      `${detalleDeudoresRows.length} ítems impagos`,
+      round2(md.totales.totalEsperadoDetalle),
+      round2(md.totales.totalAbonadoDetalle),
+      round2(md.totales.totalACobrar),
+      round2(md.totales.multas),
+    ],
+  ]
+
+  const wsDeudoresCons = XLSX.utils.aoa_to_sheet(deudoresConsAoa)
+  formatMoneyColumns(wsDeudoresCons, [3, 4, 5, 6], 6, startDetalleHeaderRow - 2)
+  formatMoneyColumns(wsDeudoresCons, [4, 5, 6, 7], startDetalleHeaderRow + 1)
+  wsDeudoresCons['!cols'] = [
+    { wch: 24 },
+    { wch: 26 },
+    { wch: 16 },
+    { wch: 38 },
+    { wch: 22 },
+    { wch: 15 },
+    { wch: 20 },
+    { wch: 14 },
+  ]
+  XLSX.utils.book_append_sheet(wb, wsDeudoresCons, 'Deudores_Consolidado')
+}
+
+export function descargarMatricesExcel(consolidado, metadata = {}) {
+  const labels = getMetadataLabels(consolidado, metadata)
+  const wb = XLSX.utils.book_new()
+  appendMatricesSheets(wb, consolidado, labels)
+  const fileName = `Matrices_Cobranza_y_Deudores_${labels.mesInicio}-${labels.anioInicio}_a_${labels.mesFin}-${labels.anioFin}.xlsx`
+  XLSX.writeFile(wb, fileName)
+}
+
+export function descargarRendicionExcel(consolidado, metadata = {}) {
+  const labels = getMetadataLabels(consolidado, metadata)
+  const wb = XLSX.utils.book_new()
+  const cp = consolidado.cumplimientoPuestos || {}
+  const di = consolidado.desgloseInternoServicios || {}
+  const rm = consolidado.resumenMora || {}
+
   // 1. Hoja Resumen_Cajas
   const resumenData = [
     ['SECRETARÍA DE HACIENDA - MERCADO PALMIRA'],
     ['INFORME DE RENDICIÓN DE CUENTAS'],
-    [`Periodo Rendido: ${mesInicio}/${anioInicio} hasta ${mesFin}/${anioFin}`],
-    [`Fecha de Corte de Caja: ${fechaCorteLabel}`],
-    [`Fecha de Emisión: ${fechaEmision}`],
+    [`Periodo Rendido: ${labels.mesInicio}/${labels.anioInicio} hasta ${labels.mesFin}/${labels.anioFin}`],
+    [`Fecha de Corte de Caja: ${labels.fechaCorteLabel}`],
+    [`Fecha de Emisión: ${labels.fechaEmision}`],
     [],
     ['CONCEPTO', 'CAJA SERVICIOS (Bs)', 'CAJA AFILIACIONES (Bs)', 'TOTAL GENERAL (Bs)'],
     ['1. Saldo Anterior al Periodo', round2(consolidado.totalAntServicios), round2(consolidado.totalAntAfiliaciones), round2(consolidado.totalAntGeneral)],
@@ -98,7 +316,6 @@ export function descargarRendicionExcel(consolidado, metadata = {}) {
     ['Porcentaje de Cumplimiento (%)', `${cp.porcentajeCumplimiento || 0}%`],
   ]
   const wsResumen = XLSX.utils.aoa_to_sheet(resumenData)
-  // Formatear con #,##0.00 las filas monetarias (índices 7..25 en cols 1..3 y filas 28..32 en col 1)
   formatMoneyColumns(wsResumen, [1, 2, 3], 7, 25)
   formatMoneyColumns(wsResumen, [1], 28, 32)
   wsResumen['!cols'] = [{ wch: 48 }, { wch: 22 }, { wch: 26 }, { wch: 24 }]
@@ -198,7 +415,7 @@ export function descargarRendicionExcel(consolidado, metadata = {}) {
   wsEgresos['!cols'] = [{ wch: 13 }, { wch: 18 }, { wch: 22 }, { wch: 52 }, { wch: 15 }, { wch: 14 }, { wch: 28 }]
   XLSX.utils.book_append_sheet(wb, wsEgresos, 'Egresos_Detallados')
 
-  // 6. Hoja Deudores_Mora (Periodo + Afiliaciones + Deudas Anteriores Heredadas)
+  // 6. Hoja Deudores_Mora
   const deudoresHeaders = [
     [
       'Tipo Deuda',
@@ -251,7 +468,8 @@ export function descargarRendicionExcel(consolidado, metadata = {}) {
 
   const subPeriodoTotal = sumCol(periodRowsAll, 5)
   const subPeriodoPagado = sumCol(periodRowsAll, 6)
-  const subPeriodoSaldo = rm.subtotalMoraPeriodo != null ? round2(rm.subtotalMoraPeriodo) : sumCol(periodRowsAll, 7)
+  const subPeriodoSaldo =
+    rm.subtotalMoraPeriodo != null ? round2(rm.subtotalMoraPeriodo) : sumCol(periodRowsAll, 7)
   const subPeriodoMulta = sumCol(periodRowsAll, 8)
 
   const subAntTotal = sumCol(deudoresAnterioresRows, 5)
@@ -278,6 +496,9 @@ export function descargarRendicionExcel(consolidado, metadata = {}) {
   wsDeudores['!cols'] = [{ wch: 26 }, { wch: 24 }, { wch: 14 }, { wch: 40 }, { wch: 24 }, { wch: 17 }, { wch: 15 }, { wch: 17 }, { wch: 13 }]
   XLSX.utils.book_append_sheet(wb, wsDeudores, 'Deudores_Mora')
 
-  const fileName = `Rendicion_Cuentas_Palmira_${mesInicio}-${anioInicio}_a_${mesFin}-${anioFin}.xlsx`
+  // 7 y 8. Hojas Matriz_Cobranza y Deudores_Consolidado
+  appendMatricesSheets(wb, consolidado, labels)
+
+  const fileName = `Rendicion_Cuentas_Palmira_${labels.mesInicio}-${labels.anioInicio}_a_${labels.mesFin}-${labels.anioFin}.xlsx`
   XLSX.writeFile(wb, fileName)
 }

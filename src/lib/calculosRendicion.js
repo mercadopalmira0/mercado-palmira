@@ -7,10 +7,478 @@
  * incluyendo fecha de corte de Asamblea, deudores heredados,
  * aportantes externos y cumplimiento completo de puestos y socios.
  */
-import { getNombreSocioCobro } from './formatters'
+import { MESES, getNombreSocioCobro } from './formatters'
 import { calcularDesgloseRubrosBase } from './calculosCobro'
 
 export const round2 = (n) => Math.round((Number(n || 0) + Number.EPSILON) * 100) / 100
+
+function parsePuestoSortKey(ident) {
+  const raw = String(ident || '').replace(/^puesto\s+/i, '').trim()
+  const numOnly = raw.match(/^(\d+)$/)
+  if (numOnly) {
+    return [0, parseInt(numOnly[1], 10), raw]
+  }
+  const ambMatch = raw.match(/amb[^\d]*(\d+)/i)
+  if (ambMatch) {
+    return [1, parseInt(ambMatch[1], 10), raw]
+  }
+  return [2, 999999, raw]
+}
+
+function comparePuestoIdent(a, b) {
+  const [ga, na, sa] = parsePuestoSortKey(a)
+  const [gb, nb, sb] = parsePuestoSortKey(b)
+  if (ga !== gb) return ga - gb
+  if (na !== nb) return na - nb
+  return sa.localeCompare(sb, 'es')
+}
+
+function formatPuestoCorto(ident) {
+  return String(ident || '').replace(/^puesto\s+/i, '').trim()
+}
+
+function buildMesesRango(mesInicio, anioInicio, mesFin, anioFin) {
+  const result = []
+  let y = parseInt(anioInicio, 10)
+  let m = parseInt(mesInicio, 10)
+  const yFin = parseInt(anioFin, 10)
+  const mFin = parseInt(mesFin, 10)
+
+  while (y < yFin || (y === yFin && m <= mFin)) {
+    result.push({
+      mes: m,
+      anio: y,
+      key: `${y}-${String(m).padStart(2, '0')}`,
+      label: `${MESES[m] || m} ${y}`,
+      shortLabel: `${(MESES[m] || String(m)).slice(0, 3)} ${String(y).slice(-2)}`,
+    })
+    m += 1
+    if (m > 12) {
+      m = 1
+      y += 1
+    }
+    if (result.length > 60) break
+  }
+  return result
+}
+
+function buildMatrizPeriodo({
+  mesesRango,
+  unidadesActivas,
+  aportantesExternos,
+  cobrosEnRango,
+  cobrosExternos,
+}) {
+  const hijosPorPadre = {}
+  unidadesActivas.forEach((u) => {
+    if (u.grupo_padre_id) {
+      if (!hijosPorPadre[u.grupo_padre_id]) hijosPorPadre[u.grupo_padre_id] = []
+      hijosPorPadre[u.grupo_padre_id].push(u)
+    }
+  })
+
+  const principales = unidadesActivas
+    .filter((u) => !u.grupo_padre_id)
+    .sort((a, b) => comparePuestoIdent(a.numero_identificador, b.numero_identificador))
+
+  // Indexar cobros_servicios del rango por unidad + mes/anio
+  const cobrosSociosMap = new Map()
+  const mesesConCobros = new Set()
+
+  cobrosEnRango.forEach((c) => {
+    const p = c.periodos_mensuales
+    if (!p) return
+    const keyMes = `${p.anio}-${String(p.mes).padStart(2, '0')}`
+    mesesConCobros.add(keyMes)
+    const mapKey = `${c.unidad_id}|${keyMes}`
+    const pagado = round2(
+      (c.pagos_servicios || [])
+        .filter((pg) => pg.estado === 'activo')
+        .reduce((s, pg) => s + (parseFloat(pg.monto) || 0), 0)
+    )
+    const esperado = round2(parseFloat(c.total_a_pagar) || 0)
+    const prev = cobrosSociosMap.get(mapKey) || { pagado: 0, esperado: 0 }
+    cobrosSociosMap.set(mapKey, {
+      pagado: round2(prev.pagado + pagado),
+      esperado: round2(prev.esperado + esperado),
+    })
+  })
+
+  // Indexar cobros_externos válidos del rango por externo_id + mes/anio
+  const mesesSet = new Set(mesesRango.map((m) => m.key))
+  const cobrosExtMap = new Map()
+  ;(cobrosExternos || [])
+    .filter((c) => !c.anulado)
+    .forEach((c) => {
+      const keyMes = `${c.anio}-${String(c.mes).padStart(2, '0')}`
+      if (!mesesSet.has(keyMes)) return
+      mesesConCobros.add(keyMes)
+      const extKey = c.externo_id || `nombre:${String(c.aportantes_externos?.nombre_completo || '').trim().toLowerCase()}`
+      const mapKey = `${extKey}|${keyMes}`
+      const pagado = round2(parseFloat(c.monto_pagado) || 0)
+      const corr = round2(parseFloat(c.monto_correspondiente) || pagado)
+      const prev = cobrosExtMap.get(mapKey) || { pagado: 0, esperado: 0 }
+      cobrosExtMap.set(mapKey, {
+        pagado: round2(prev.pagado + pagado),
+        esperado: round2(prev.esperado + corr),
+      })
+    })
+
+  const clasificarEstado = (pagado, esperado, diferencia) => {
+    if (diferencia <= 0) return 'Al día'
+    if (pagado > 0) return 'Parcial'
+    return esperado > 0 ? 'Debe' : 'Al día'
+  }
+
+  const filasSocios = principales.map((u) => {
+    const hijos = (hijosPorPadre[u.id] || []).sort((a, b) =>
+      comparePuestoIdent(a.numero_identificador, b.numero_identificador)
+    )
+    const puestosGrupo = [u.numero_identificador, ...hijos.map((h) => h.numero_identificador)]
+      .map(formatPuestoCorto)
+      .filter(Boolean)
+    const puestoDisplay = puestosGrupo.join(', ')
+    const titular = u.socios?.nombre || 'Sin socio'
+
+    let integrantes = 'Individual'
+    if (hijos.length > 0) {
+      const nombres = []
+      ;[u, ...hijos].forEach((item) => {
+        const n = item.socios?.nombre
+        if (n && !nombres.includes(n)) nombres.push(n)
+      })
+      integrantes =
+        nombres.length > 1
+          ? nombres.join(', ')
+          : u.nombres_titulares || `${titular} (${puestosGrupo.length} puestos)`
+    }
+
+    const pagosPorMes = {}
+    let totalPagado = 0
+    let totalEsperado = 0
+
+    mesesRango.forEach((m) => {
+      const cell = cobrosSociosMap.get(`${u.id}|${m.key}`) || { pagado: 0, esperado: 0 }
+      pagosPorMes[m.key] = round2(cell.pagado)
+      totalPagado += cell.pagado
+      totalEsperado += cell.esperado
+    })
+
+    totalPagado = round2(totalPagado)
+    totalEsperado = round2(totalEsperado)
+    const diferencia = round2(Math.max(0, totalEsperado - totalPagado))
+
+    return {
+      id: u.id,
+      tipoBloque: 'socio',
+      esGrupo: hijos.length > 0 || (parseInt(u.cantidad_puestos, 10) || 1) > 1,
+      puesto: puestoDisplay,
+      titular,
+      integrantes,
+      pagosPorMes,
+      totalPagado,
+      totalEsperado,
+      diferencia,
+      estado: clasificarEstado(totalPagado, totalEsperado, diferencia),
+    }
+  })
+
+  const externosActivos = [...(aportantesExternos || [])]
+    .filter((e) => e.activo !== false)
+    .sort((a, b) =>
+      String(a.nombre_completo || '').localeCompare(String(b.nombre_completo || ''), 'es')
+    )
+
+  const filasExternos = externosActivos.map((ext) => {
+    const sugerido = round2(parseFloat(ext.monto_mensual_sugerido) || 0)
+    const pagosPorMes = {}
+    let totalPagado = 0
+    let totalEsperado = 0
+
+    mesesRango.forEach((m) => {
+      const cell =
+        cobrosExtMap.get(`${ext.id}|${m.key}`) ||
+        cobrosExtMap.get(`nombre:${String(ext.nombre_completo || '').trim().toLowerCase()}|${m.key}`)
+      if (cell) {
+        pagosPorMes[m.key] = round2(cell.pagado)
+        totalPagado += cell.pagado
+        totalEsperado += cell.esperado
+      } else {
+        pagosPorMes[m.key] = 0
+        if (mesesConCobros.has(m.key)) {
+          totalEsperado += sugerido
+        }
+      }
+    })
+
+    totalPagado = round2(totalPagado)
+    totalEsperado = round2(totalEsperado)
+    const diferencia = round2(Math.max(0, totalEsperado - totalPagado))
+
+    return {
+      id: ext.id,
+      tipoBloque: 'externo',
+      esGrupo: false,
+      puesto: ext.referencia_ubicacion || 'Externo',
+      titular: ext.nombre_completo || 'Externo',
+      integrantes: ext.observaciones || 'Otra Asociación (Externo)',
+      pagosPorMes,
+      totalPagado,
+      totalEsperado,
+      diferencia,
+      estado: clasificarEstado(totalPagado, totalEsperado, diferencia),
+    }
+  })
+
+  const sumarBloque = (filas) => {
+    const porMes = {}
+    mesesRango.forEach((m) => {
+      porMes[m.key] = round2(filas.reduce((s, f) => s + (f.pagosPorMes[m.key] || 0), 0))
+    })
+    const totalPagado = round2(filas.reduce((s, f) => s + f.totalPagado, 0))
+    const totalEsperado = round2(filas.reduce((s, f) => s + f.totalEsperado, 0))
+    const diferencia = round2(filas.reduce((s, f) => s + f.diferencia, 0))
+    return { porMes, totalPagado, totalEsperado, diferencia }
+  }
+
+  return {
+    meses: mesesRango,
+    filasSocios,
+    filasExternos,
+    totalesSocios: sumarBloque(filasSocios),
+    totalesExternos: sumarBloque(filasExternos),
+    totalesGenerales: sumarBloque([...filasSocios, ...filasExternos]),
+  }
+}
+
+function normalizarNombrePersona(str) {
+  return String(str || '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s+/g, ' ')
+}
+
+function buildMatrizDeudores({
+  cobrosServicios,
+  cobrosExternos,
+  deudoresCiclos,
+  afiliaciones,
+  fechaInicioPeriodo,
+  fechaFinPeriodo,
+}) {
+  const items = []
+
+  // 1. cobros_servicios pendientes o parciales
+  ;(cobrosServicios || []).forEach((c) => {
+    if (c.estado === 'anulado') return
+    const totalEsperado = round2(parseFloat(c.total_a_pagar) || 0)
+    const abonado = round2(
+      (c.pagos_servicios || [])
+        .filter((p) => p.estado === 'activo')
+        .reduce((s, p) => s + (parseFloat(p.monto) || 0), 0)
+    )
+    const saldoPendiente = round2(Math.max(0, totalEsperado - abonado))
+    if (saldoPendiente <= 0) return
+
+    const multaTotal = round2(parseFloat(c.monto_multa) || 0)
+    const multaPendiente = round2(Math.min(saldoPendiente, multaTotal))
+    const capitalPeriodo = round2(Math.max(0, saldoPendiente - multaPendiente))
+
+    const p = c.periodos_mensuales
+    const pDate = p ? new Date(p.anio, p.mes - 1, 1) : null
+    const esPeriodoActual =
+      pDate && fechaInicioPeriodo && fechaFinPeriodo
+        ? pDate >= fechaInicioPeriodo && pDate <= fechaFinPeriodo
+        : true
+
+    const socioId =
+      c.socio_id_historico ||
+      c.unidades_cobro?.socio_responsable_id ||
+      c.unidades_cobro?.socios?.id ||
+      null
+    const nombre = getNombreSocioCobro(c)
+    const puesto = c.unidades_cobro?.numero_identificador || 'Sin puesto'
+    const periodoLabel = p ? `${MESES[p.mes] || p.mes} ${p.anio}` : 'Sin periodo'
+
+    items.push({
+      id: `cs-${c.id}`,
+      groupKey: socioId ? `socio:${socioId}` : `nombre:${normalizarNombrePersona(nombre)}`,
+      tipoCategoria: 'periodo_actual',
+      origen: esPeriodoActual ? 'Mes actual' : 'Mes anterior',
+      nombre,
+      telefono: c.unidades_cobro?.socios?.telefono || '',
+      puesto,
+      detalle: periodoLabel,
+      montoEsperado: totalEsperado,
+      abonado,
+      saldoPendiente,
+      multa: multaPendiente,
+      capitalPeriodo,
+      capitalAnterior: 0,
+    })
+  })
+
+  // 2. cobros_externos con saldo pendiente
+  ;(cobrosExternos || []).forEach((ce) => {
+    if (ce.anulado) return
+    const esperado = round2(parseFloat(ce.monto_correspondiente) || 0)
+    const abonado = round2(parseFloat(ce.monto_pagado) || 0)
+    const saldoPendiente = round2(Math.max(0, esperado - abonado))
+    if (saldoPendiente <= 0) return
+
+    const nombre = ce.aportantes_externos?.nombre_completo || 'Aportante Externo'
+    const puesto = ce.aportantes_externos?.referencia_ubicacion || 'Externo'
+    const periodoLabel = `${MESES[ce.mes] || ce.mes} ${ce.anio}`
+
+    items.push({
+      id: `ext-${ce.id}`,
+      groupKey: ce.externo_id ? `ext:${ce.externo_id}` : `nombre:${normalizarNombrePersona(nombre)}`,
+      tipoCategoria: 'periodo_actual',
+      origen: 'Externo',
+      nombre,
+      telefono: '',
+      puesto,
+      detalle: periodoLabel,
+      montoEsperado: esperado,
+      abonado,
+      saldoPendiente,
+      multa: 0,
+      capitalPeriodo: saldoPendiente,
+      capitalAnterior: 0,
+    })
+  })
+
+  // 3. deudores_ciclos (heredados / cierres anteriores)
+  ;(deudoresCiclos || []).forEach((dc) => {
+    if (!['pendiente', 'parcial'].includes(dc.estado)) return
+    const esperado = round2(parseFloat(dc.monto_original) || 0)
+    const abonado = round2(parseFloat(dc.monto_pagado) || 0)
+    const saldoPendiente = round2(Math.max(0, esperado - abonado))
+    if (saldoPendiente <= 0) return
+
+    const nombre = dc.nombre_deudor || dc.socios?.nombre || 'Sin nombre'
+    const puesto = dc.puesto_referencia
+      ? `Puesto ${formatPuestoCorto(dc.puesto_referencia)}`
+      : '-'
+    const detalle = [dc.detalle_deuda, dc.ciclo_origen ? `(${dc.ciclo_origen})` : '']
+      .filter(Boolean)
+      .join(' ')
+
+    items.push({
+      id: `dc-${dc.id}`,
+      groupKey: dc.socio_id ? `socio:${dc.socio_id}` : `nombre:${normalizarNombrePersona(nombre)}`,
+      tipoCategoria: 'deuda_anterior',
+      origen: 'Deuda anterior',
+      nombre,
+      telefono: dc.socios?.telefono || '',
+      puesto,
+      detalle,
+      montoEsperado: esperado,
+      abonado,
+      saldoPendiente,
+      multa: 0,
+      capitalPeriodo: 0,
+      capitalAnterior: saldoPendiente,
+    })
+  })
+
+  // 4. afiliaciones con saldo pendiente
+  ;(afiliaciones || []).forEach((af) => {
+    if (af.estado === 'anulada') return
+    const saldoPendiente = round2(parseFloat(af.saldo_pendiente) || 0)
+    if (saldoPendiente <= 0) return
+    const esperado = round2(parseFloat(af.monto_total) || 1500)
+    const abonado = round2(
+      (af.pagos_afiliacion || [])
+        .filter((p) => p.estado === 'activo')
+        .reduce((s, p) => s + (parseFloat(p.monto) || 0), 0)
+    )
+    const nombre = af.socios?.nombre || 'Socio Afiliado'
+
+    items.push({
+      id: `af-${af.id}`,
+      groupKey: af.socio_id ? `socio:${af.socio_id}` : `nombre:${normalizarNombrePersona(nombre)}`,
+      tipoCategoria: 'deuda_anterior',
+      origen: 'Afiliación',
+      nombre,
+      telefono: af.socios?.telefono || '',
+      puesto: 'Afiliación',
+      detalle: `Plan ${esperado.toFixed(2)} Bs (cuota ${round2(af.cuota_acordada)} Bs/mes)`,
+      montoEsperado: esperado,
+      abonado,
+      saldoPendiente,
+      multa: 0,
+      capitalPeriodo: 0,
+      capitalAnterior: saldoPendiente,
+    })
+  })
+
+  // Agrupar 1 fila por deudor
+  const mapa = new Map()
+  items.forEach((it) => {
+    if (!mapa.has(it.groupKey)) {
+      mapa.set(it.groupKey, {
+        groupKey: it.groupKey,
+        nombre: it.nombre,
+        telefono: it.telefono || '',
+        puestosSet: new Set(),
+        deudaPeriodoActual: 0,
+        deudaAnterior: 0,
+        multas: 0,
+        totalACobrar: 0,
+        cantidadItems: 0,
+        items: [],
+      })
+    }
+    const g = mapa.get(it.groupKey)
+    if (!g.telefono && it.telefono) g.telefono = it.telefono
+    if (it.puesto && it.puesto !== '-' && it.puesto !== 'Sin puesto') {
+      g.puestosSet.add(it.puesto)
+    }
+    g.deudaPeriodoActual = round2(g.deudaPeriodoActual + it.capitalPeriodo)
+    g.deudaAnterior = round2(g.deudaAnterior + it.capitalAnterior)
+    g.multas = round2(g.multas + it.multa)
+    g.totalACobrar = round2(g.totalACobrar + it.saldoPendiente)
+    g.cantidadItems += 1
+    g.items.push(it)
+  })
+
+  const resumenPorDeudor = Array.from(mapa.values())
+    .map((g) => ({
+      groupKey: g.groupKey,
+      puestoRef: g.puestosSet.size > 0 ? Array.from(g.puestosSet).join(', ') : '-',
+      nombre: g.nombre,
+      telefono: g.telefono || '-',
+      deudaPeriodoActual: g.deudaPeriodoActual,
+      deudaAnterior: g.deudaAnterior,
+      multas: g.multas,
+      totalACobrar: g.totalACobrar,
+      cantidadItems: g.cantidadItems,
+      tienePeriodoActual: g.deudaPeriodoActual > 0 || g.multas > 0,
+      tieneDeudaAnterior: g.deudaAnterior > 0,
+      items: g.items,
+    }))
+    .sort((a, b) => b.totalACobrar - a.totalACobrar || a.nombre.localeCompare(b.nombre, 'es'))
+
+  // Detalle ordenado siguiendo el orden del resumen
+  const detalleDeudas = resumenPorDeudor.flatMap((g) => g.items)
+
+  return {
+    resumenPorDeudor,
+    detalleDeudas,
+    totales: {
+      deudaPeriodoActual: round2(resumenPorDeudor.reduce((s, r) => s + r.deudaPeriodoActual, 0)),
+      deudaAnterior: round2(resumenPorDeudor.reduce((s, r) => s + r.deudaAnterior, 0)),
+      multas: round2(resumenPorDeudor.reduce((s, r) => s + r.multas, 0)),
+      totalACobrar: round2(resumenPorDeudor.reduce((s, r) => s + r.totalACobrar, 0)),
+      cantidadItems: detalleDeudas.length,
+      totalEsperadoDetalle: round2(detalleDeudas.reduce((s, d) => s + d.montoEsperado, 0)),
+      totalAbonadoDetalle: round2(detalleDeudas.reduce((s, d) => s + d.abonado, 0)),
+    },
+  }
+}
 
 function parseFecha(val) {
   if (!val) return null
@@ -79,6 +547,7 @@ export function calcularConsolidadoRendicion({
   afiliaciones = [],
   deudoresCiclos = [],
   unidadesCobro = [],
+  aportantesExternos = [],
 }) {
   // 1. Fechas límite del rango de periodos y de corte de caja para Asamblea
   const fechaInicioPeriodo = new Date(anioInicio, mesInicio - 1, 1, 0, 0, 0, 0)
@@ -630,6 +1099,23 @@ export function calcularConsolidadoRendicion({
     porcentajeCumplimiento,
   }
 
+  const mesesRango = buildMesesRango(mesInicio, anioInicio, mesFin, anioFin)
+  const matrizPeriodo = buildMatrizPeriodo({
+    mesesRango,
+    unidadesActivas,
+    aportantesExternos,
+    cobrosEnRango,
+    cobrosExternos,
+  })
+  const matrizDeudores = buildMatrizDeudores({
+    cobrosServicios,
+    cobrosExternos,
+    deudoresCiclos,
+    afiliaciones,
+    fechaInicioPeriodo,
+    fechaFinPeriodo,
+  })
+
   return {
     fechaInicio: fechaLimiteInicio,
     fechaFin: fechaLimiteFin,
@@ -727,5 +1213,7 @@ export function calcularConsolidadoRendicion({
       subtotalDeudasAnteriores,
       totalGeneralMora,
     },
+    matrizPeriodo,
+    matrizDeudores,
   }
 }

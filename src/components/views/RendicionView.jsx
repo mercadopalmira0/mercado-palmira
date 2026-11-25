@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
-import { calcularConsolidadoRendicion } from '../../lib/calculosRendicion'
-import { descargarRendicionExcel } from '../../lib/exportExcel'
+import { calcularConsolidadoRendicion, round2 } from '../../lib/calculosRendicion'
+import { descargarRendicionExcel, descargarMatricesExcel } from '../../lib/exportExcel'
 import { registrarAuditoria } from '../../lib/auditoria'
 import { MESES, getLocalDateStr } from '../../lib/formatters'
 import {
@@ -16,7 +16,12 @@ import {
   Wallet,
   Users,
   CheckCircle2,
-  ClipboardCheck
+  ClipboardCheck,
+  Search,
+  ChevronDown,
+  ChevronRight,
+  Table2,
+  AlertCircle
 } from 'lucide-react'
 
 function getDefaultFechaCorte(mesFin, anioFin) {
@@ -55,6 +60,14 @@ export default function RendicionView() {
   const [lockingPeriod, setLockingPeriod] = useState(false)
   const [statusMessage, setStatusMessage] = useState(null)
 
+  // Pestañas y filtros de matrices
+  const [activeTab, setActiveTab] = useState('resumen') // 'resumen' | 'matriz_periodo' | 'matriz_deudores'
+  const [matrizFilter, setMatrizFilter] = useState('todos') // 'todos' | 'deben' | 'al_dia'
+  const [matrizSearch, setMatrizSearch] = useState('')
+  const [deudorFilter, setDeudorFilter] = useState('todos') // 'todos' | 'periodo_actual' | 'deuda_anterior'
+  const [deudorSearch, setDeudorSearch] = useState('')
+  const [expandedDeudores, setExpandedDeudores] = useState({})
+
   // Modal de Cierre de Periodo y Traslado de Deudores
   const [isCloseModalOpen, setIsCloseModalOpen] = useState(false)
   const [nombreNuevoCiclo, setNombreNuevoCiclo] = useState('')
@@ -75,6 +88,7 @@ export default function RendicionView() {
         { data: deudoresCiclosData },
         { data: pagosDeudoresData },
         { data: cobrosExternosData },
+        { data: aportantesExternosData },
         { data: unidadesData },
         { data: egresosData },
         { data: movimientosData },
@@ -126,10 +140,15 @@ export default function RendicionView() {
           deudores_ciclos (caja, nombre_deudor)
         `),
         supabase.from('cobros_externos').select(`
-          id, anio, mes, monto_pagado, monto_guardia, monto_agua, es_monto_editado, metodo_pago, nro_talonario_fisico, fecha_pago, anulado,
-          aportantes_externos (nombre_completo, referencia_ubicacion)
+          id, externo_id, anio, mes, monto_correspondiente, monto_pagado, monto_guardia, monto_agua, es_monto_editado, metodo_pago, nro_talonario_fisico, fecha_pago, anulado,
+          aportantes_externos (id, nombre_completo, referencia_ubicacion)
         `),
-        supabase.from('unidades_cobro').select('id, socio_responsable_id, cantidad_puestos, activo, grupo_padre_id'),
+        supabase.from('aportantes_externos').select('*').eq('activo', true),
+        supabase.from('unidades_cobro').select(`
+          id, socio_responsable_id, numero_identificador, nombres_titulares, nombre_grupo,
+          tipo, subtipo_fijo, monto_fijo_personalizado, cantidad_puestos, activo, grupo_padre_id,
+          socios (id, nombre, telefono)
+        `),
         supabase.from('egresos').select('*'),
         supabase.from('movimientos_internos').select('*'),
       ])
@@ -163,6 +182,7 @@ export default function RendicionView() {
         afiliaciones: afiliacionesData || [],
         deudoresCiclos: deudoresCiclosData || [],
         unidadesCobro: unidadesData || [],
+        aportantesExternos: aportantesExternosData || [],
       })
 
       setConsolidado(resultado)
@@ -411,6 +431,22 @@ export default function RendicionView() {
     })
   }
 
+  const handleExportMatrices = () => {
+    if (!consolidado) return
+    descargarMatricesExcel(consolidado, {
+      mesInicio,
+      anioInicio,
+      mesFin,
+      anioFin,
+      fechaCorte,
+      fechaEmision: new Date().toLocaleDateString('es-BO'),
+    })
+  }
+
+  const toggleExpandDeudor = (key) => {
+    setExpandedDeudores((prev) => ({ ...prev, [key]: !prev[key] }))
+  }
+
   const estanTodosRendidos = periodosRango.length > 0 && periodosRango.every((p) => p.rendido_en_asamblea)
   const cp = consolidado?.cumplimientoPuestos || {}
 
@@ -455,6 +491,16 @@ export default function RendicionView() {
             >
               <Download className="w-4 h-4" />
               <span>Descargar Excel (.xlsx)</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={handleExportMatrices}
+              disabled={loading || !consolidado}
+              className="px-3.5 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white rounded-xl text-xs font-bold shadow-sm transition-all flex items-center gap-1.5"
+            >
+              <Table2 className="w-4 h-4" />
+              <span>Solo Matrices (.xlsx)</span>
             </button>
 
             <button
@@ -577,6 +623,50 @@ export default function RendicionView() {
         </div>
       )}
 
+      {/* Pestañas de Visualización */}
+      <div className="flex flex-wrap gap-2 no-print">
+        <button
+          type="button"
+          onClick={() => setActiveTab('resumen')}
+          className={`px-4 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 border ${
+            activeTab === 'resumen'
+              ? 'bg-slate-900 text-white border-slate-900 shadow-sm'
+              : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+          }`}
+        >
+          <Wallet className="w-4 h-4" />
+          <span>Informe Consolidado (Asamblea)</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveTab('matriz_periodo')}
+          className={`px-4 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 border ${
+            activeTab === 'matriz_periodo'
+              ? 'bg-emerald-700 text-white border-emerald-700 shadow-sm'
+              : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+          }`}
+        >
+          <Table2 className="w-4 h-4" />
+          <span>Matriz de Cobranza — Solo Periodo</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveTab('matriz_deudores')}
+          className={`px-4 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 border ${
+            activeTab === 'matriz_deudores'
+              ? 'bg-red-700 text-white border-red-700 shadow-sm'
+              : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+          }`}
+        >
+          <AlertCircle className="w-4 h-4" />
+          <span>
+            Deudores ({consolidado?.matrizDeudores?.resumenPorDeudor?.length || 0})
+          </span>
+        </button>
+      </div>
+
       {/* REPORTE OFICIAL IMPRIMIBLE */}
       {loading ? (
         <div className="p-12 text-center bg-white rounded-2xl border border-slate-200">
@@ -587,7 +677,7 @@ export default function RendicionView() {
         <div className="p-8 text-center bg-white rounded-2xl border border-slate-200 text-slate-500 text-xs">
           No hay información disponible para el periodo seleccionado.
         </div>
-      ) : (
+      ) : activeTab === 'resumen' ? (
         <div className="bg-white rounded-2xl p-6 md:p-8 border border-slate-200 shadow-sm print-container space-y-6">
           {/* Encabezado Oficial */}
           <div className="border-b-2 border-slate-900 pb-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -1056,6 +1146,596 @@ export default function RendicionView() {
             </div>
           </div>
         </div>
+      ) : activeTab === 'matriz_periodo' ? (
+        (() => {
+          const mp = consolidado.matrizPeriodo || { meses: [], filasSocios: [], filasExternos: [] }
+          const q = matrizSearch.trim().toLowerCase()
+          const matchesRow = (f) => {
+            if (matrizFilter === 'deben' && f.diferencia <= 0) return false
+            if (matrizFilter === 'al_dia' && f.diferencia > 0) return false
+            if (!q) return true
+            return (
+              String(f.puesto || '').toLowerCase().includes(q) ||
+              String(f.titular || '').toLowerCase().includes(q) ||
+              String(f.integrantes || '').toLowerCase().includes(q)
+            )
+          }
+
+          const sociosVisibles = mp.filasSocios.filter(matchesRow)
+          const externosVisibles = mp.filasExternos.filter(matchesRow)
+          const allVisibles = [...sociosVisibles, ...externosVisibles]
+
+          const calcTotals = (rows) => {
+            const porMes = {}
+            mp.meses.forEach((m) => {
+              porMes[m.key] = round2(rows.reduce((s, r) => s + (r.pagosPorMes[m.key] || 0), 0))
+            })
+            return {
+              porMes,
+              totalPagado: round2(rows.reduce((s, r) => s + r.totalPagado, 0)),
+              totalEsperado: round2(rows.reduce((s, r) => s + r.totalEsperado, 0)),
+              diferencia: round2(rows.reduce((s, r) => s + r.diferencia, 0)),
+            }
+          }
+          const totSociosFilt = calcTotals(sociosVisibles)
+          const totExternosFilt = calcTotals(externosVisibles)
+          const totGenFilt = calcTotals(allVisibles)
+
+          const renderEstadoBadge = (estado) => {
+            if (estado === 'Al día') {
+              return (
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
+                  Al día
+                </span>
+              )
+            }
+            if (estado === 'Parcial') {
+              return (
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-200">
+                  Parcial
+                </span>
+              )
+            }
+            return (
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-red-100 text-red-800 border border-red-200">
+                Debe
+              </span>
+            )
+          }
+
+          return (
+            <div className="bg-white rounded-2xl p-5 md:p-6 border border-slate-200 shadow-sm print-container space-y-4">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 border-b pb-4">
+                <div>
+                  <h3 className="text-base font-black text-slate-900">
+                    Matriz 1: Control de Cobranza — Solo Periodo ({MESES[mesInicio]} {anioInicio} a {MESES[mesFin]} {anioFin})
+                  </h3>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    Pagos válidos mes a mes sin mezclar deudas heredadas. Puestos agrupados muestran todos sus integrantes.
+                  </p>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2 no-print">
+                  <div className="relative">
+                    <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                    <input
+                      type="text"
+                      value={matrizSearch}
+                      onChange={(e) => setMatrizSearch(e.target.value)}
+                      placeholder="Buscar puesto o socio..."
+                      className="pl-8 pr-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-xl w-52 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                    />
+                  </div>
+
+                  <div className="flex items-center bg-slate-100 p-0.5 rounded-xl text-xs font-semibold">
+                    {[
+                      { id: 'todos', label: 'Todos' },
+                      { id: 'deben', label: 'Solo los que deben' },
+                      { id: 'al_dia', label: 'Al día' },
+                    ].map((opt) => (
+                      <button
+                        key={opt.id}
+                        type="button"
+                        onClick={() => setMatrizFilter(opt.id)}
+                        className={`px-2.5 py-1 rounded-lg transition-all ${
+                          matrizFilter === opt.id
+                            ? 'bg-white text-slate-900 shadow-sm'
+                            : 'text-slate-600 hover:text-slate-900'
+                        }`}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs text-left border-collapse border border-slate-200">
+                  <thead>
+                    <tr className="bg-slate-900 text-white font-bold">
+                      <th className="p-2.5 border-r border-slate-700">N° Puesto</th>
+                      <th className="p-2.5 border-r border-slate-700">Titular / Responsable</th>
+                      <th className="p-2.5 border-r border-slate-700">Integrantes / Registro</th>
+                      {mp.meses.map((m) => (
+                        <th key={m.key} className="p-2.5 border-r border-slate-700 text-right whitespace-nowrap">
+                          {m.shortLabel} (Bs)
+                        </th>
+                      ))}
+                      <th className="p-2.5 border-r border-slate-700 text-right">Total Pagado</th>
+                      <th className="p-2.5 border-r border-slate-700 text-right">Total Esperado</th>
+                      <th className="p-2.5 border-r border-slate-700 text-right">Diferencia</th>
+                      <th className="p-2.5 text-center">Estado</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
+                    {sociosVisibles.length === 0 && externosVisibles.length === 0 ? (
+                      <tr>
+                        <td colSpan={7 + mp.meses.length} className="p-6 text-center text-slate-400 italic">
+                          No hay registros que coincidan con el filtro seleccionado.
+                        </td>
+                      </tr>
+                    ) : (
+                      <>
+                        {sociosVisibles.map((f) => (
+                          <tr key={f.id} className={f.diferencia > 0 ? 'bg-red-50/30 hover:bg-red-50/50' : 'hover:bg-slate-50'}>
+                            <td className="p-2 border-r border-slate-200 font-bold text-slate-900 whitespace-nowrap">
+                              {f.puesto}
+                            </td>
+                            <td className="p-2 border-r border-slate-200 font-semibold">{f.titular}</td>
+                            <td className="p-2 border-r border-slate-200 text-[11px] text-slate-600">{f.integrantes}</td>
+                            {mp.meses.map((m) => {
+                              const val = f.pagosPorMes[m.key] || 0
+                              return (
+                                <td
+                                  key={m.key}
+                                  className={`p-2 border-r border-slate-200 text-right font-mono ${
+                                    val > 0 ? 'text-slate-800' : 'text-slate-400'
+                                  }`}
+                                >
+                                  {val.toFixed(2)}
+                                </td>
+                              )
+                            })}
+                            <td className="p-2 border-r border-slate-200 text-right font-bold text-emerald-700">
+                              {f.totalPagado.toFixed(2)}
+                            </td>
+                            <td className="p-2 border-r border-slate-200 text-right">
+                              {f.totalEsperado.toFixed(2)}
+                            </td>
+                            <td
+                              className={`p-2 border-r border-slate-200 text-right font-bold ${
+                                f.diferencia > 0 ? 'text-red-700' : 'text-slate-500'
+                              }`}
+                            >
+                              {f.diferencia.toFixed(2)}
+                            </td>
+                            <td className="p-2 text-center">{renderEstadoBadge(f.estado)}</td>
+                          </tr>
+                        ))}
+
+                        {sociosVisibles.length > 0 && (
+                          <tr className="bg-slate-100 font-bold text-slate-900">
+                            <td colSpan={3} className="p-2 border-r border-slate-200 text-right">
+                              Subtotal Socios / Grupos ({sociosVisibles.length}):
+                            </td>
+                            {mp.meses.map((m) => (
+                              <td key={m.key} className="p-2 border-r border-slate-200 text-right font-mono">
+                                {(totSociosFilt.porMes[m.key] || 0).toFixed(2)}
+                              </td>
+                            ))}
+                            <td className="p-2 border-r border-slate-200 text-right text-emerald-800">
+                              {totSociosFilt.totalPagado.toFixed(2)}
+                            </td>
+                            <td className="p-2 border-r border-slate-200 text-right">
+                              {totSociosFilt.totalEsperado.toFixed(2)}
+                            </td>
+                            <td className="p-2 border-r border-slate-200 text-right text-red-700">
+                              {totSociosFilt.diferencia.toFixed(2)}
+                            </td>
+                            <td className="p-2" />
+                          </tr>
+                        )}
+
+                        {externosVisibles.length > 0 && (
+                          <>
+                            <tr className="bg-indigo-50 border-y border-indigo-200">
+                              <td colSpan={7 + mp.meses.length} className="p-2 font-black text-indigo-900 uppercase tracking-wide text-[11px]">
+                                Aportantes Externos — Otra Asociación ({externosVisibles.length})
+                              </td>
+                            </tr>
+                            {externosVisibles.map((f) => (
+                              <tr key={`ext-${f.id}`} className={f.diferencia > 0 ? 'bg-red-50/30' : 'hover:bg-indigo-50/20'}>
+                                <td className="p-2 border-r border-slate-200 font-bold text-indigo-950 whitespace-nowrap">
+                                  {f.puesto}
+                                </td>
+                                <td className="p-2 border-r border-slate-200 font-semibold">{f.titular}</td>
+                                <td className="p-2 border-r border-slate-200 text-[11px] text-slate-600">{f.integrantes}</td>
+                                {mp.meses.map((m) => {
+                                  const val = f.pagosPorMes[m.key] || 0
+                                  return (
+                                    <td
+                                      key={m.key}
+                                      className={`p-2 border-r border-slate-200 text-right font-mono ${
+                                        val > 0 ? 'text-slate-800' : 'text-slate-400'
+                                      }`}
+                                    >
+                                      {val.toFixed(2)}
+                                    </td>
+                                  )
+                                })}
+                                <td className="p-2 border-r border-slate-200 text-right font-bold text-emerald-700">
+                                  {f.totalPagado.toFixed(2)}
+                                </td>
+                                <td className="p-2 border-r border-slate-200 text-right">
+                                  {f.totalEsperado.toFixed(2)}
+                                </td>
+                                <td
+                                  className={`p-2 border-r border-slate-200 text-right font-bold ${
+                                    f.diferencia > 0 ? 'text-red-700' : 'text-slate-500'
+                                  }`}
+                                >
+                                  {f.diferencia.toFixed(2)}
+                                </td>
+                                <td className="p-2 text-center">{renderEstadoBadge(f.estado)}</td>
+                              </tr>
+                            ))}
+                            <tr className="bg-indigo-50/70 font-bold text-indigo-950">
+                              <td colSpan={3} className="p-2 border-r border-slate-200 text-right">
+                                Subtotal Externos ({externosVisibles.length}):
+                              </td>
+                              {mp.meses.map((m) => (
+                                <td key={m.key} className="p-2 border-r border-slate-200 text-right font-mono">
+                                  {(totExternosFilt.porMes[m.key] || 0).toFixed(2)}
+                                </td>
+                              ))}
+                              <td className="p-2 border-r border-slate-200 text-right text-emerald-800">
+                                {totExternosFilt.totalPagado.toFixed(2)}
+                              </td>
+                              <td className="p-2 border-r border-slate-200 text-right">
+                                {totExternosFilt.totalEsperado.toFixed(2)}
+                              </td>
+                              <td className="p-2 border-r border-slate-200 text-right text-red-700">
+                                {totExternosFilt.diferencia.toFixed(2)}
+                              </td>
+                              <td className="p-2" />
+                            </tr>
+                          </>
+                        )}
+                      </>
+                    )}
+                  </tbody>
+                  <tfoot>
+                    <tr className="bg-slate-900 text-white font-black">
+                      <td colSpan={3} className="p-2.5 border-r border-slate-700 text-right uppercase">
+                        TOTAL GENERAL ({allVisibles.length} filas):
+                      </td>
+                      {mp.meses.map((m) => (
+                        <td key={m.key} className="p-2.5 border-r border-slate-700 text-right font-mono">
+                          {(totGenFilt.porMes[m.key] || 0).toFixed(2)}
+                        </td>
+                      ))}
+                      <td className="p-2.5 border-r border-slate-700 text-right text-emerald-400">
+                        {totGenFilt.totalPagado.toFixed(2)}
+                      </td>
+                      <td className="p-2.5 border-r border-slate-700 text-right">
+                        {totGenFilt.totalEsperado.toFixed(2)}
+                      </td>
+                      <td className="p-2.5 border-r border-slate-700 text-right text-amber-300">
+                        {totGenFilt.diferencia.toFixed(2)}
+                      </td>
+                      <td className="p-2.5" />
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            </div>
+          )
+        })()
+      ) : (
+        (() => {
+          const md = consolidado.matrizDeudores || {
+            resumenPorDeudor: [],
+            detalleDeudas: [],
+            totales: {
+              deudaPeriodoActual: 0,
+              deudaAnterior: 0,
+              multas: 0,
+              totalACobrar: 0,
+              cantidadItems: 0,
+              totalEsperadoDetalle: 0,
+              totalAbonadoDetalle: 0,
+            },
+          }
+          const q = deudorSearch.trim().toLowerCase()
+          const resumenFiltrado = md.resumenPorDeudor.filter((d) => {
+            if (deudorFilter === 'periodo_actual' && !d.tienePeriodoActual) return false
+            if (deudorFilter === 'deuda_anterior' && !d.tieneDeudaAnterior) return false
+            if (!q) return true
+            return (
+              String(d.nombre || '').toLowerCase().includes(q) ||
+              String(d.puestoRef || '').toLowerCase().includes(q) ||
+              d.items.some((it) => String(it.detalle || '').toLowerCase().includes(q))
+            )
+          })
+
+          const detalleFiltrado = resumenFiltrado.flatMap((r) =>
+            r.items.filter((it) => {
+              if (deudorFilter === 'periodo_actual') return it.tipoCategoria === 'periodo_actual'
+              if (deudorFilter === 'deuda_anterior') return it.tipoCategoria === 'deuda_anterior'
+              return true
+            })
+          )
+
+          const totResumenFilt = {
+            periodoActual: round2(resumenFiltrado.reduce((s, r) => s + r.deudaPeriodoActual, 0)),
+            anterior: round2(resumenFiltrado.reduce((s, r) => s + r.deudaAnterior, 0)),
+            multas: round2(resumenFiltrado.reduce((s, r) => s + r.multas, 0)),
+            total: round2(resumenFiltrado.reduce((s, r) => s + r.totalACobrar, 0)),
+            items: resumenFiltrado.reduce((s, r) => s + r.cantidadItems, 0),
+          }
+
+          const totDetalleFilt = {
+            esperado: round2(detalleFiltrado.reduce((s, d) => s + d.montoEsperado, 0)),
+            abonado: round2(detalleFiltrado.reduce((s, d) => s + d.abonado, 0)),
+            saldo: round2(detalleFiltrado.reduce((s, d) => s + d.saldoPendiente, 0)),
+            multa: round2(detalleFiltrado.reduce((s, d) => s + d.multa, 0)),
+          }
+
+          const origenBadge = (origen) => {
+            if (origen === 'Mes actual') {
+              return 'bg-red-100 text-red-800 border-red-200'
+            }
+            if (origen === 'Deuda anterior') {
+              return 'bg-amber-100 text-amber-900 border-amber-200'
+            }
+            if (origen === 'Externo') {
+              return 'bg-indigo-100 text-indigo-800 border-indigo-200'
+            }
+            return 'bg-blue-100 text-blue-800 border-blue-200'
+          }
+
+          return (
+            <div className="space-y-6 print-container">
+              {/* NIVEL A: Matriz Resumen por Deudor */}
+              <div className="bg-white rounded-2xl p-5 md:p-6 border border-slate-200 shadow-sm space-y-4">
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 border-b pb-4">
+                  <div>
+                    <h3 className="text-base font-black text-slate-900">
+                      Matriz 2A: Resumen Consolidado por Deudor (Total a Cobrar)
+                    </h3>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      Consolida en 1 sola fila por persona las deudas del periodo actual, meses anteriores, externos y deudas heredadas.
+                    </p>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2 no-print">
+                    <div className="relative">
+                      <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                      <input
+                        type="text"
+                        value={deudorSearch}
+                        onChange={(e) => setDeudorSearch(e.target.value)}
+                        placeholder="Buscar nombre o puesto..."
+                        className="pl-8 pr-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-xl w-52 focus:outline-none focus:ring-2 focus:ring-red-500"
+                      />
+                    </div>
+
+                    <div className="flex items-center bg-slate-100 p-0.5 rounded-xl text-xs font-semibold">
+                      {[
+                        { id: 'todos', label: 'Todos' },
+                        { id: 'periodo_actual', label: 'Solo Periodo Actual' },
+                        { id: 'deuda_anterior', label: 'Solo Deuda Anterior' },
+                      ].map((opt) => (
+                        <button
+                          key={opt.id}
+                          type="button"
+                          onClick={() => setDeudorFilter(opt.id)}
+                          className={`px-2.5 py-1 rounded-lg transition-all ${
+                            deudorFilter === opt.id
+                              ? 'bg-white text-slate-900 shadow-sm'
+                              : 'text-slate-600 hover:text-slate-900'
+                          }`}
+                        >
+                          {opt.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                {resumenFiltrado.length === 0 ? (
+                  <p className="text-xs text-emerald-700 font-semibold py-4">
+                    ¡No existen deudores pendientes para los filtros seleccionados!
+                  </p>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs text-left border-collapse border border-slate-200">
+                      <thead>
+                        <tr className="bg-red-900 text-white font-bold">
+                          <th className="p-2.5 border-r border-red-800">N° Puesto / Ref</th>
+                          <th className="p-2.5 border-r border-red-800">Nombre del Deudor</th>
+                          <th className="p-2.5 border-r border-red-800">Teléfono</th>
+                          <th className="p-2.5 border-r border-red-800 text-right">Deuda Periodo Actual (Bs)</th>
+                          <th className="p-2.5 border-r border-red-800 text-right">Deuda Anterior / Heredada (Bs)</th>
+                          <th className="p-2.5 border-r border-red-800 text-right">Multas (Bs)</th>
+                          <th className="p-2.5 border-r border-red-800 text-right bg-red-950">TOTAL A COBRAR (Bs)</th>
+                          <th className="p-2.5 border-r border-red-800 text-center">Ítems</th>
+                          <th className="p-2.5 text-center no-print">Detalle</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
+                        {resumenFiltrado.map((d) => {
+                          const isExpanded = Boolean(expandedDeudores[d.groupKey])
+                          return (
+                            <React.Fragment key={d.groupKey}>
+                              <tr className="hover:bg-red-50/30">
+                                <td className="p-2.5 border-r border-slate-200 font-bold text-slate-900">{d.puestoRef}</td>
+                                <td className="p-2.5 border-r border-slate-200 font-bold">{d.nombre}</td>
+                                <td className="p-2.5 border-r border-slate-200">{d.telefono}</td>
+                                <td className="p-2.5 border-r border-slate-200 text-right font-mono">
+                                  {d.deudaPeriodoActual.toFixed(2)}
+                                </td>
+                                <td className="p-2.5 border-r border-slate-200 text-right font-mono text-amber-800">
+                                  {d.deudaAnterior.toFixed(2)}
+                                </td>
+                                <td className="p-2.5 border-r border-slate-200 text-right font-mono">
+                                  {d.multas.toFixed(2)}
+                                </td>
+                                <td className="p-2.5 border-r border-slate-200 text-right font-black text-red-700 bg-red-50/40 font-mono">
+                                  {d.totalACobrar.toFixed(2)}
+                                </td>
+                                <td className="p-2.5 border-r border-slate-200 text-center font-bold">{d.cantidadItems}</td>
+                                <td className="p-2.5 text-center no-print">
+                                  <button
+                                    type="button"
+                                    onClick={() => toggleExpandDeudor(d.groupKey)}
+                                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-[11px] font-bold"
+                                  >
+                                    {isExpanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+                                    <span>Ver detalle</span>
+                                  </button>
+                                </td>
+                              </tr>
+
+                              {isExpanded && (
+                                <tr className="bg-slate-50/90">
+                                  <td colSpan={9} className="p-3 border-b border-slate-200">
+                                    <div className="text-[11px] font-bold text-slate-700 mb-1.5">
+                                      Desglose de deuda para {d.nombre}:
+                                    </div>
+                                    <div className="space-y-1">
+                                      {d.items.map((it) => (
+                                        <div
+                                          key={it.id}
+                                          className="flex flex-wrap items-center justify-between gap-2 bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-[11px]"
+                                        >
+                                          <div className="flex items-center gap-2">
+                                            <span className={`px-2 py-0.5 rounded border text-[10px] font-bold ${origenBadge(it.origen)}`}>
+                                              {it.origen}
+                                            </span>
+                                            <span className="font-semibold text-slate-800">{it.puesto}</span>
+                                            <span className="text-slate-600">{it.detalle}</span>
+                                          </div>
+                                          <div className="font-mono font-bold text-red-700">
+                                            Saldo: {it.saldoPendiente.toFixed(2)} Bs
+                                          </div>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </td>
+                                </tr>
+                              )}
+                            </React.Fragment>
+                          )
+                        })}
+                      </tbody>
+                      <tfoot>
+                        <tr className="bg-slate-900 text-white font-black">
+                          <td colSpan={3} className="p-2.5 border-r border-slate-700 text-right uppercase">
+                            TOTALES ({resumenFiltrado.length} deudores):
+                          </td>
+                          <td className="p-2.5 border-r border-slate-700 text-right font-mono">
+                            {totResumenFilt.periodoActual.toFixed(2)}
+                          </td>
+                          <td className="p-2.5 border-r border-slate-700 text-right font-mono text-amber-300">
+                            {totResumenFilt.anterior.toFixed(2)}
+                          </td>
+                          <td className="p-2.5 border-r border-slate-700 text-right font-mono">
+                            {totResumenFilt.multas.toFixed(2)}
+                          </td>
+                          <td className="p-2.5 border-r border-slate-700 text-right font-mono text-emerald-400">
+                            {totResumenFilt.total.toFixed(2)} Bs
+                          </td>
+                          <td className="p-2.5 border-r border-slate-700 text-center">
+                            {totResumenFilt.items}
+                          </td>
+                          <td className="p-2.5 no-print" />
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
+                )}
+              </div>
+
+              {/* NIVEL B: Tabla completa de Detalle de qué deben */}
+              <div className="bg-white rounded-2xl p-5 md:p-6 border border-slate-200 shadow-sm space-y-4">
+                <div className="border-b pb-3">
+                  <h3 className="text-base font-black text-slate-900">
+                    Matriz 2B: Detalle Completo de Conceptos Impagos
+                  </h3>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    Desglose individual de cada mes, cuota o deuda heredada que compone el total a cobrar.
+                  </p>
+                </div>
+
+                {detalleFiltrado.length === 0 ? (
+                  <p className="text-xs text-slate-500 italic">Sin conceptos impagos para mostrar.</p>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs text-left border-collapse border border-slate-200">
+                      <thead>
+                        <tr className="bg-slate-800 text-white font-bold">
+                          <th className="p-2.5 border-r border-slate-700">Nombre</th>
+                          <th className="p-2.5 border-r border-slate-700">Puesto</th>
+                          <th className="p-2.5 border-r border-slate-700">Origen</th>
+                          <th className="p-2.5 border-r border-slate-700">Periodo / Detalle</th>
+                          <th className="p-2.5 border-r border-slate-700 text-right">Monto Esperado (Bs)</th>
+                          <th className="p-2.5 border-r border-slate-700 text-right">Abonado (Bs)</th>
+                          <th className="p-2.5 border-r border-slate-700 text-right">Saldo Pendiente (Bs)</th>
+                          <th className="p-2.5 text-right">Multa (Bs)</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
+                        {detalleFiltrado.map((it) => (
+                          <tr key={it.id} className="hover:bg-slate-50">
+                            <td className="p-2 border-r border-slate-200 font-bold text-slate-900">{it.nombre}</td>
+                            <td className="p-2 border-r border-slate-200">{it.puesto}</td>
+                            <td className="p-2 border-r border-slate-200">
+                              <span className={`px-2 py-0.5 rounded border text-[10px] font-bold ${origenBadge(it.origen)}`}>
+                                {it.origen}
+                              </span>
+                            </td>
+                            <td className="p-2 border-r border-slate-200">{it.detalle}</td>
+                            <td className="p-2 border-r border-slate-200 text-right font-mono">
+                              {it.montoEsperado.toFixed(2)}
+                            </td>
+                            <td className="p-2 border-r border-slate-200 text-right font-mono text-emerald-700">
+                              {it.abonado.toFixed(2)}
+                            </td>
+                            <td className="p-2 border-r border-slate-200 text-right font-bold font-mono text-red-700">
+                              {it.saldoPendiente.toFixed(2)}
+                            </td>
+                            <td className="p-2 text-right font-mono">{it.multa.toFixed(2)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                      <tfoot>
+                        <tr className="bg-slate-900 text-white font-black">
+                          <td colSpan={4} className="p-2.5 border-r border-slate-700 text-right uppercase">
+                            TOTALES ({detalleFiltrado.length} ítems):
+                          </td>
+                          <td className="p-2.5 border-r border-slate-700 text-right font-mono">
+                            {totDetalleFilt.esperado.toFixed(2)}
+                          </td>
+                          <td className="p-2.5 border-r border-slate-700 text-right font-mono text-emerald-400">
+                            {totDetalleFilt.abonado.toFixed(2)}
+                          </td>
+                          <td className="p-2.5 border-r border-slate-700 text-right font-mono text-amber-300">
+                            {totDetalleFilt.saldo.toFixed(2)} Bs
+                          </td>
+                          <td className="p-2.5 text-right font-mono">
+                            {totDetalleFilt.multa.toFixed(2)}
+                          </td>
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
+                )}
+              </div>
+            </div>
+          )
+        })()
       )}
 
       {/* Modal Confirmación Cierre de Periodo y Arrastre de Ciclo */}
