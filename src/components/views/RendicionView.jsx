@@ -108,7 +108,7 @@ export default function RendicionView() {
           id, anio, mes, monto_pagado, monto_guardia, monto_agua, es_monto_editado, metodo_pago, nro_talonario_fisico, fecha_pago, anulado,
           aportantes_externos (nombre_completo, referencia_ubicacion)
         `),
-        supabase.from('unidades_cobro').select('id, socio_responsable_id, cantidad_puestos, activo'),
+        supabase.from('unidades_cobro').select('id, socio_responsable_id, cantidad_puestos, activo, grupo_padre_id').is('grupo_padre_id', null),
         supabase.from('egresos').select('*'),
         supabase.from('movimientos_internos').select('*'),
       ])
@@ -951,26 +951,27 @@ export default function RendicionView() {
 
       {/* Modal Confirmación Cierre de Periodo y Arrastre de Ciclo */}
       {isCloseModalOpen && consolidado && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-sm overflow-y-auto no-print">
-          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-lg my-8 overflow-hidden">
-            <div className="bg-slate-900 px-6 py-4 text-white flex items-center justify-between">
-              <div className="flex items-center gap-2.5">
-                <div className="p-2 bg-amber-500/20 text-amber-400 rounded-lg">
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-2 sm:p-4 bg-black/60 backdrop-blur-sm no-print">
+          <div className="w-full max-w-lg max-h-[88dvh] sm:max-h-[90dvh] flex flex-col overflow-hidden rounded-2xl bg-white shadow-2xl border border-slate-200">
+            <div className="shrink-0 bg-slate-900 px-5 py-3.5 text-white flex items-center justify-between">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <div className="p-2 bg-amber-500/20 text-amber-400 rounded-lg shrink-0">
                   <Lock className="w-5 h-5" />
                 </div>
-                <div>
-                  <h3 className="font-bold text-base">Cerrar Periodo en Asamblea y Abrir Nuevo Ciclo</h3>
-                  <p className="text-xs text-slate-400">
+                <div className="min-w-0">
+                  <h3 className="font-bold text-sm sm:text-base truncate">Cerrar Periodo y Abrir Nuevo Ciclo</h3>
+                  <p className="text-[11px] sm:text-xs text-slate-400 truncate">
                     Rango: {MESES[mesInicio]} {anioInicio} a {MESES[mesFin]} {anioFin}
                   </p>
                 </div>
               </div>
-              <button onClick={() => setIsCloseModalOpen(false)}>
-                <X className="w-5 h-5 text-slate-400 hover:text-white" />
+              <button type="button" onClick={() => setIsCloseModalOpen(false)} className="p-1.5 text-slate-300 hover:text-white shrink-0">
+                <X className="w-5 h-5" />
               </button>
             </div>
 
-            <form onSubmit={handleConfirmarCierreAsamblea} className="p-6 space-y-4">
+            <form onSubmit={handleConfirmarCierreAsamblea} className="flex flex-col flex-1 min-h-0 overflow-hidden">
+              <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-4 sm:p-6 space-y-4">
               <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200 text-xs space-y-1.5">
                 <span className="font-bold text-slate-800 block">
                   Saldos Finales que pasarán como Saldo Inicial del Nuevo Ciclo:
@@ -1017,21 +1018,23 @@ export default function RendicionView() {
                 </span>
               </label>
 
-              <div className="pt-2 flex justify-end gap-2 border-t border-slate-100">
+              </div>
+
+              <div className="shrink-0 border-t border-slate-200 bg-white px-4 py-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] flex items-center justify-end gap-2">
                 <button
                   type="button"
                   onClick={() => setIsCloseModalOpen(false)}
-                  className="px-4 py-2 text-xs text-slate-600"
+                  className="px-4 py-2 text-xs font-semibold text-slate-600"
                 >
                   Cancelar
                 </button>
                 <button
                   type="submit"
                   disabled={lockingPeriod}
-                  className="px-5 py-2.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-md"
+                  className="px-4 py-2.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-md"
                 >
                   <CheckCircle2 className="w-4 h-4" />
-                  <span>{lockingPeriod ? 'Cerrando Ciclo...' : 'Confirmar y Sellar en Asamblea'}</span>
+                  <span>{lockingPeriod ? 'Cerrando...' : 'Confirmar y Sellar'}</span>
                 </button>
               </div>
             </form>

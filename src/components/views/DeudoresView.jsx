@@ -825,73 +825,75 @@ export default function DeudoresView() {
 
       {/* Modal Agregar / Editar Deuda */}
       {isNewModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-sm overflow-y-auto">
-          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-md my-8 overflow-hidden">
-            <div className="bg-slate-900 px-6 py-4 text-white flex items-center justify-between">
-              <div>
-                <h3 className="font-bold text-base">
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-2 sm:p-4 bg-black/60 backdrop-blur-sm">
+          <div className="w-full max-w-md max-h-[88dvh] sm:max-h-[90dvh] flex flex-col overflow-hidden rounded-2xl bg-white shadow-2xl border border-slate-200">
+            <div className="shrink-0 bg-slate-900 px-5 py-3.5 text-white flex items-center justify-between">
+              <div className="min-w-0">
+                <h3 className="font-bold text-sm sm:text-base truncate">
                   {editingDeuda ? 'Editar Deuda (Auditado)' : 'Registrar Deudor Heredado'}
                 </h3>
-                <p className="text-xs text-slate-400">Deuda de gestión anterior o ciclo cerrado</p>
+                <p className="text-[11px] sm:text-xs text-slate-400 truncate">Deuda de gestión anterior o ciclo cerrado</p>
               </div>
-              <button onClick={() => setIsNewModalOpen(false)}>
-                <X className="w-5 h-5 text-slate-400 hover:text-white" />
+              <button type="button" onClick={() => setIsNewModalOpen(false)} className="p-1.5 text-slate-300 hover:text-white shrink-0">
+                <X className="w-5 h-5" />
               </button>
             </div>
 
-            <form onSubmit={handleSaveNuevaDeuda} className="p-6 space-y-4">
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">Vincular con Socio Existente (Opcional)</label>
-                <select value={selectedSocioId} onChange={(e) => handleSelectSocio(e.target.value)} className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-300 rounded-xl">
-                  <option value="">-- Ingresar manualmente / Deudor externo --</option>
-                  {socios.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.nombre} {s.unidades_cobro?.[0]?.numero_identificador ? `(${s.unidades_cobro[0].numero_identificador})` : ''}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <form onSubmit={handleSaveNuevaDeuda} className="flex flex-col flex-1 min-h-0 overflow-hidden">
+              <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-4 sm:p-6 space-y-4">
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">Nombre / Socio *</label>
-                  <input type="text" required value={nombreDeudor} onChange={(e) => setNombreDeudor(e.target.value)} className="w-full px-3 py-2 text-xs bg-white border border-slate-300 rounded-xl" />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">Puesto Referencia</label>
-                  <input type="text" value={puestoRef} onChange={(e) => setPuestoRef(e.target.value)} className="w-full px-3 py-2 text-xs bg-white border border-slate-300 rounded-xl" />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">Caja Destino</label>
-                  <select value={caja} onChange={(e) => setCaja(e.target.value)} className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-300 rounded-xl font-bold">
-                    <option value="servicios">Caja Servicios</option>
-                    <option value="afiliaciones">Caja Afiliaciones</option>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">Vincular con Socio Existente (Opcional)</label>
+                  <select value={selectedSocioId} onChange={(e) => handleSelectSocio(e.target.value)} className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-300 rounded-xl">
+                    <option value="">-- Ingresar manualmente / Deudor externo --</option>
+                    {socios.map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.nombre} {s.unidades_cobro?.[0]?.numero_identificador ? `(${s.unidades_cobro[0].numero_identificador})` : ''}
+                      </option>
+                    ))}
                   </select>
                 </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">Nombre / Socio *</label>
+                    <input type="text" required value={nombreDeudor} onChange={(e) => setNombreDeudor(e.target.value)} className="w-full px-3 py-2 text-xs bg-white border border-slate-300 rounded-xl" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">Puesto Referencia</label>
+                    <input type="text" value={puestoRef} onChange={(e) => setPuestoRef(e.target.value)} className="w-full px-3 py-2 text-xs bg-white border border-slate-300 rounded-xl" />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">Caja Destino</label>
+                    <select value={caja} onChange={(e) => setCaja(e.target.value)} className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-300 rounded-xl font-bold">
+                      <option value="servicios">Caja Servicios</option>
+                      <option value="afiliaciones">Caja Afiliaciones</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">Monto Adeudado (Bs)</label>
+                    <input type="number" inputMode="decimal" step="0.01" min="0.01" required value={montoOriginal} onChange={(e) => setMontoOriginal(e.target.value)} className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-xl font-bold" />
+                  </div>
+                </div>
+
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">Monto Adeudado (Bs)</label>
-                  <input type="number" inputMode="decimal" step="0.01" min="0.01" required value={montoOriginal} onChange={(e) => setMontoOriginal(e.target.value)} className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-xl font-bold" />
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">Ciclo / Gestión Origen</label>
+                  <input type="text" value={cicloOrigen} onChange={(e) => setCicloOrigen(e.target.value)} className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-300 rounded-xl" />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">Detalle / Meses Adeudados *</label>
+                  <textarea rows={2} required value={detalleDeuda} onChange={(e) => setDetalleDeuda(e.target.value)} className="w-full px-3 py-2 text-xs bg-white border border-slate-300 rounded-xl" />
                 </div>
               </div>
 
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">Ciclo / Gestión Origen</label>
-                <input type="text" value={cicloOrigen} onChange={(e) => setCicloOrigen(e.target.value)} className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-300 rounded-xl" />
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">Detalle / Meses Adeudados *</label>
-                <textarea rows={2} required value={detalleDeuda} onChange={(e) => setDetalleDeuda(e.target.value)} className="w-full px-3 py-2 text-xs bg-white border border-slate-300 rounded-xl" />
-              </div>
-
-              <div className="pt-2 flex justify-end gap-2 border-t border-slate-100">
-                <button type="button" onClick={() => setIsNewModalOpen(false)} className="px-4 py-2 text-xs text-slate-600">
+              <div className="shrink-0 border-t border-slate-200 bg-white px-4 py-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] flex items-center justify-end gap-2">
+                <button type="button" onClick={() => setIsNewModalOpen(false)} className="px-4 py-2 text-xs font-semibold text-slate-600">
                   Cancelar
                 </button>
-                <button type="submit" disabled={savingDeuda} className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold">
+                <button type="submit" disabled={savingDeuda} className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold">
                   {savingDeuda ? 'Guardando...' : editingDeuda ? 'Actualizar Deuda' : 'Guardar Deuda'}
                 </button>
               </div>
@@ -902,73 +904,75 @@ export default function DeudoresView() {
 
       {/* Modal Registrar / Editar Pago */}
       {selectedDeudaPago && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-sm overflow-y-auto">
-          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-md my-8 overflow-hidden">
-            <div className="bg-slate-900 px-6 py-4 text-white flex items-center justify-between">
-              <div>
-                <h3 className="font-bold text-base">{editingPagoDeuda ? 'Editar Abono (Auditado)' : 'Cobrar Deuda de Ciclo'}</h3>
-                <p className="text-xs text-slate-400">
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-2 sm:p-4 bg-black/60 backdrop-blur-sm">
+          <div className="w-full max-w-md max-h-[88dvh] sm:max-h-[90dvh] flex flex-col overflow-hidden rounded-2xl bg-white shadow-2xl border border-slate-200">
+            <div className="shrink-0 bg-slate-900 px-5 py-3.5 text-white flex items-center justify-between">
+              <div className="min-w-0">
+                <h3 className="font-bold text-sm sm:text-base truncate">{editingPagoDeuda ? 'Editar Abono (Auditado)' : 'Cobrar Deuda de Ciclo'}</h3>
+                <p className="text-[11px] sm:text-xs text-slate-400 truncate">
                   {selectedDeudaPago.nombre_deudor} • Caja {selectedDeudaPago.caja}
                 </p>
               </div>
-              <button onClick={() => setSelectedDeudaPago(null)}>
-                <X className="w-5 h-5 text-slate-400 hover:text-white" />
+              <button type="button" onClick={() => setSelectedDeudaPago(null)} className="p-1.5 text-slate-300 hover:text-white shrink-0">
+                <X className="w-5 h-5" />
               </button>
             </div>
 
-            <form onSubmit={handleRegistrarPago} className="p-6 space-y-4">
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">Monto (Bs)</label>
-                  <input type="number" inputMode="decimal" step="0.01" min="0.01" required value={pagoMonto} onChange={(e) => setPagoMonto(e.target.value)} className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-xl font-bold" />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">Fecha de Pago</label>
-                  <input type="date" required value={pagoFecha} onChange={(e) => setPagoFecha(e.target.value)} className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-300 rounded-xl" />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1.5">Método de Pago</label>
+            <form onSubmit={handleRegistrarPago} className="flex flex-col flex-1 min-h-0 overflow-hidden">
+              <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-4 sm:p-6 space-y-4">
                 <div className="grid grid-cols-2 gap-3">
-                  <button
-                    type="button"
-                    onClick={() => setPagoMetodo('efectivo')}
-                    className={`py-2 px-3 rounded-xl border text-xs font-bold flex items-center justify-center gap-2 ${
-                      pagoMetodo === 'efectivo' ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-slate-50 text-slate-700 border-slate-300'
-                    }`}
-                  >
-                    <Coins className="w-4 h-4" />
-                    <span>Efectivo</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setPagoMetodo('qr')}
-                    className={`py-2 px-3 rounded-xl border text-xs font-bold flex items-center justify-center gap-2 ${
-                      pagoMetodo === 'qr' ? 'bg-blue-600 text-white border-blue-600' : 'bg-slate-50 text-slate-700 border-slate-300'
-                    }`}
-                  >
-                    <QrCode className="w-4 h-4" />
-                    <span>QR / Banco</span>
-                  </button>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">Monto (Bs)</label>
+                    <input type="number" inputMode="decimal" step="0.01" min="0.01" required value={pagoMonto} onChange={(e) => setPagoMonto(e.target.value)} className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-xl font-bold" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">Fecha de Pago</label>
+                    <input type="date" required value={pagoFecha} onChange={(e) => setPagoFecha(e.target.value)} className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-300 rounded-xl" />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1.5">Método de Pago</label>
+                  <div className="grid grid-cols-2 gap-3">
+                    <button
+                      type="button"
+                      onClick={() => setPagoMetodo('efectivo')}
+                      className={`py-2 px-3 rounded-xl border text-xs font-bold flex items-center justify-center gap-2 ${
+                        pagoMetodo === 'efectivo' ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-slate-50 text-slate-700 border-slate-300'
+                      }`}
+                    >
+                      <Coins className="w-4 h-4" />
+                      <span>Efectivo</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPagoMetodo('qr')}
+                      className={`py-2 px-3 rounded-xl border text-xs font-bold flex items-center justify-center gap-2 ${
+                        pagoMetodo === 'qr' ? 'bg-blue-600 text-white border-blue-600' : 'bg-slate-50 text-slate-700 border-slate-300'
+                      }`}
+                    >
+                      <QrCode className="w-4 h-4" />
+                      <span>QR / Banco</span>
+                    </button>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">N° Talonario Físico (Opcional)</label>
+                  <input type="text" value={pagoTalonario} onChange={(e) => setPagoTalonario(e.target.value)} className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-300 rounded-xl" />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">Observaciones (Opcional)</label>
+                  <input type="text" value={pagoObs} onChange={(e) => setPagoObs(e.target.value)} className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-300 rounded-xl" />
                 </div>
               </div>
 
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">N° Talonario Físico (Opcional)</label>
-                <input type="text" value={pagoTalonario} onChange={(e) => setPagoTalonario(e.target.value)} className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-300 rounded-xl" />
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">Observaciones (Opcional)</label>
-                <input type="text" value={pagoObs} onChange={(e) => setPagoObs(e.target.value)} className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-300 rounded-xl" />
-              </div>
-
-              <div className="pt-2 flex justify-end gap-2 border-t border-slate-100">
-                <button type="button" onClick={() => setSelectedDeudaPago(null)} className="px-4 py-2 text-xs text-slate-600">
+              <div className="shrink-0 border-t border-slate-200 bg-white px-4 py-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] flex items-center justify-end gap-2">
+                <button type="button" onClick={() => setSelectedDeudaPago(null)} className="px-4 py-2 text-xs font-semibold text-slate-600">
                   Cancelar
                 </button>
-                <button type="submit" disabled={savingPago} className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center gap-1">
+                <button type="submit" disabled={savingPago} className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center gap-1">
                   <CheckCircle2 className="w-4 h-4" />
                   <span>{savingPago ? 'Guardando...' : editingPagoDeuda ? 'Actualizar Abono' : 'Confirmar Pago'}</span>
                 </button>
@@ -980,21 +984,21 @@ export default function DeudoresView() {
 
       {/* Modal Historial de Abonos */}
       {selectedDeudaHist && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-sm overflow-y-auto">
-          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-lg my-8 overflow-hidden">
-            <div className="bg-slate-900 px-6 py-4 text-white flex items-center justify-between">
-              <div>
-                <h3 className="font-bold text-base">Historial de Abonos</h3>
-                <p className="text-xs text-slate-400">
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-2 sm:p-4 bg-black/60 backdrop-blur-sm">
+          <div className="w-full max-w-lg max-h-[88dvh] sm:max-h-[90dvh] flex flex-col overflow-hidden rounded-2xl bg-white shadow-2xl border border-slate-200">
+            <div className="shrink-0 bg-slate-900 px-5 py-3.5 text-white flex items-center justify-between">
+              <div className="min-w-0">
+                <h3 className="font-bold text-sm sm:text-base truncate">Historial de Abonos</h3>
+                <p className="text-[11px] sm:text-xs text-slate-400 truncate">
                   {selectedDeudaHist.nombre_deudor} • {selectedDeudaHist.detalle_deuda}
                 </p>
               </div>
-              <button onClick={() => setSelectedDeudaHist(null)}>
-                <X className="w-5 h-5 text-slate-400 hover:text-white" />
+              <button type="button" onClick={() => setSelectedDeudaHist(null)} className="p-1.5 text-slate-300 hover:text-white shrink-0">
+                <X className="w-5 h-5" />
               </button>
             </div>
 
-            <div className="p-6 space-y-3 max-h-[70vh] overflow-y-auto">
+            <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-4 sm:p-6 space-y-3">
               {(selectedDeudaHist.pagos_deudores_ciclos || []).length === 0 ? (
                 <p className="text-xs text-slate-500 text-center py-6">No hay pagos registrados aún para esta deuda.</p>
               ) : (
@@ -1096,6 +1100,12 @@ export default function DeudoresView() {
                   ))}
                 </div>
               )}
+            </div>
+
+            <div className="shrink-0 border-t border-slate-200 bg-white px-4 py-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] flex justify-end">
+              <button type="button" onClick={() => setSelectedDeudaHist(null)} className="px-4 py-2 text-xs font-semibold bg-slate-100 hover:bg-slate-200 rounded-xl">
+                Cerrar
+              </button>
             </div>
           </div>
         </div>

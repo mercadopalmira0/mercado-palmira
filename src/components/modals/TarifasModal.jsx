@@ -170,27 +170,29 @@ export default function TarifasModal({ isOpen, onClose, onUpdated }) {
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-sm overflow-y-auto animate-fadeIn">
-      <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-xl my-8 overflow-hidden">
-        <div className="bg-slate-900 px-6 py-4 text-white flex items-center justify-between">
-          <div className="flex items-center space-x-2.5">
-            <div className="p-2 bg-emerald-500/20 text-emerald-400 rounded-lg">
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-2 sm:p-4 bg-black/60 backdrop-blur-sm animate-fadeIn">
+      <div className="w-full max-w-xl max-h-[88dvh] sm:max-h-[90dvh] flex flex-col overflow-hidden rounded-2xl bg-white shadow-2xl border border-slate-200">
+        <div className="shrink-0 bg-slate-900 px-5 py-3.5 text-white flex items-center justify-between">
+          <div className="flex items-center space-x-2.5 min-w-0">
+            <div className="p-2 bg-emerald-500/20 text-emerald-400 rounded-lg shrink-0">
               <Settings className="w-5 h-5" />
             </div>
-            <div>
-              <h3 className="font-bold text-base leading-tight">Configuración de Tarifas del Mercado</h3>
-              <p className="text-xs text-slate-400">Rastreo automático en bitácora de auditoría</p>
+            <div className="min-w-0">
+              <h3 className="font-bold text-sm sm:text-base leading-tight truncate">Configuración de Tarifas del Mercado</h3>
+              <p className="text-[11px] sm:text-xs text-slate-400 truncate">Rastreo automático en bitácora de auditoría</p>
             </div>
           </div>
           <button
+            type="button"
             onClick={onClose}
-            className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+            className="p-1.5 rounded-lg text-slate-300 hover:text-white hover:bg-slate-800 transition-colors shrink-0"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
-        <form onSubmit={handleSave} className="p-6 space-y-4 max-h-[75vh] overflow-y-auto">
+        <form onSubmit={handleSave} className="flex flex-col flex-1 min-h-0 overflow-hidden">
+          <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-4 sm:p-6 space-y-4">
           {loading && <p className="text-xs text-slate-500 text-center">Cargando configuración...</p>}
 
           {errorMsg && (
@@ -403,7 +405,9 @@ export default function TarifasModal({ isOpen, onClose, onUpdated }) {
             </div>
           </div>
 
-          <div className="pt-2 flex items-center justify-end gap-2.5">
+          </div>
+
+          <div className="shrink-0 border-t border-slate-200 bg-white px-4 py-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] flex items-center justify-end gap-2">
             <button
               type="button"
               onClick={onClose}
@@ -414,10 +418,10 @@ export default function TarifasModal({ isOpen, onClose, onUpdated }) {
             <button
               type="submit"
               disabled={saving}
-              className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-md shadow-emerald-900/20 transition-all flex items-center gap-1.5"
+              className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-md shadow-emerald-900/20 transition-all flex items-center gap-1.5"
             >
               <CheckCircle2 className="w-4 h-4" />
-              <span>{saving ? 'Guardando...' : 'Guardar y Registrar en Bitácora'}</span>
+              <span>{saving ? 'Guardando...' : 'Guardar y Registrar'}</span>
             </button>
           </div>
         </form>

@@ -201,27 +201,31 @@ export default function HistorialPagosModal({
     }
   }
 
+  const subtitulo = cobro.resumenGrupo?.esGrupo
+    ? `${cobro.resumenGrupo.puestosLabel} • ${cobro.resumenGrupo.sociosLabel}`
+    : `${cobro.unidades_cobro?.numero_identificador || ''} • ${nombreSocio}`
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-sm overflow-y-auto animate-fadeIn">
-      <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-lg my-8 overflow-hidden">
-        <div className="bg-slate-900 px-6 py-4 text-white flex items-center justify-between">
-          <div className="flex items-center space-x-2.5">
-            <div className="p-2 bg-emerald-500/20 text-emerald-400 rounded-lg">
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-2 sm:p-4 bg-black/60 backdrop-blur-sm animate-fadeIn">
+      <div className="w-full max-w-lg max-h-[88dvh] sm:max-h-[90dvh] flex flex-col overflow-hidden rounded-2xl bg-white shadow-2xl border border-slate-200">
+        <div className="shrink-0 bg-slate-900 px-5 py-3.5 text-white flex items-center justify-between">
+          <div className="flex items-center space-x-2.5 min-w-0">
+            <div className="p-2 bg-emerald-500/20 text-emerald-400 rounded-lg shrink-0">
               <Receipt className="w-5 h-5" />
             </div>
-            <div>
-              <h3 className="font-bold text-base leading-tight">Historial de Pagos</h3>
-              <p className="text-xs text-slate-400">
-                {cobro.unidades_cobro?.numero_identificador} • {nombreSocio}
+            <div className="min-w-0">
+              <h3 className="font-bold text-sm sm:text-base leading-tight truncate">Historial de Pagos</h3>
+              <p className="text-[11px] sm:text-xs text-slate-400 truncate">
+                {subtitulo}
               </p>
             </div>
           </div>
-          <button onClick={onClose} className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800">
+          <button type="button" onClick={onClose} className="p-1.5 rounded-lg text-slate-300 hover:text-white hover:bg-slate-800 shrink-0">
             <X className="w-5 h-5" />
           </button>
         </div>
 
-        <div className="p-6 space-y-4">
+        <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-4 sm:p-6 space-y-4">
           {errorMsg && (
             <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-xs text-red-700 flex items-start gap-2">
               <AlertCircle className="w-4 h-4 text-red-600 flex-shrink-0 mt-0.5" />
@@ -246,7 +250,7 @@ export default function HistorialPagosModal({
               No hay pagos registrados para este cobro en el mes.
             </div>
           ) : (
-            <div className="divide-y divide-slate-100 max-h-80 overflow-y-auto">
+            <div className="divide-y divide-slate-100">
               {pagos.map((pago) => {
                 const isAnulado = pago.estado === 'anulado'
                 const isThisAnulando = anulandoId === pago.id

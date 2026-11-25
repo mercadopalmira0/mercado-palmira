@@ -660,21 +660,22 @@ export default function InventarioView() {
 
       {/* Modal Crear / Editar Ítem */}
       {isModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-sm overflow-y-auto">
-          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-lg my-8 overflow-hidden">
-            <div className="bg-slate-900 px-6 py-4 text-white flex items-center justify-between">
-              <div>
-                <h3 className="font-bold text-base">
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-2 sm:p-4 bg-black/60 backdrop-blur-sm">
+          <div className="w-full max-w-lg max-h-[88dvh] sm:max-h-[90dvh] flex flex-col overflow-hidden rounded-2xl bg-white shadow-2xl border border-slate-200">
+            <div className="shrink-0 bg-slate-900 px-5 py-3.5 text-white flex items-center justify-between">
+              <div className="min-w-0">
+                <h3 className="font-bold text-sm sm:text-base truncate">
                   {editingItem ? 'Actualizar Bien / Insumo (Auditado)' : 'Registrar Bien / Insumo'}
                 </h3>
-                <p className="text-xs text-slate-400">Control patrimonial (costo referencial informativo)</p>
+                <p className="text-[11px] sm:text-xs text-slate-400 truncate">Control patrimonial (costo referencial informativo)</p>
               </div>
-              <button onClick={() => setIsModalOpen(false)}>
-                <X className="w-5 h-5 text-slate-400 hover:text-white" />
+              <button type="button" onClick={() => setIsModalOpen(false)} className="p-1.5 text-slate-300 hover:text-white shrink-0">
+                <X className="w-5 h-5" />
               </button>
             </div>
 
-            <form onSubmit={handleSaveItem} className="p-6 space-y-4 max-h-[78vh] overflow-y-auto">
+            <form onSubmit={handleSaveItem} className="flex flex-col flex-1 min-h-0 overflow-hidden">
+              <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-4 sm:p-6 space-y-4">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 mb-1">Nombre del Bien / Objeto *</label>
@@ -765,11 +766,13 @@ export default function InventarioView() {
                 </div>
               </div>
 
-              <div className="pt-2 flex justify-end gap-2 border-t border-slate-100">
-                <button type="button" onClick={() => setIsModalOpen(false)} className="px-4 py-2 text-xs text-slate-600">
+              </div>
+
+              <div className="shrink-0 border-t border-slate-200 bg-white px-4 py-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] flex items-center justify-end gap-2">
+                <button type="button" onClick={() => setIsModalOpen(false)} className="px-4 py-2 text-xs font-semibold text-slate-600">
                   Cancelar
                 </button>
-                <button type="submit" disabled={saving} className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center gap-1">
+                <button type="submit" disabled={saving} className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center gap-1">
                   <CheckCircle2 className="w-4 h-4" />
                   <span>{saving ? 'Guardando...' : editingItem ? 'Guardar Cambios' : 'Registrar Ítem'}</span>
                 </button>

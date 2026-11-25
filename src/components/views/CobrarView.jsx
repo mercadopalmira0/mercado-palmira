@@ -3,7 +3,7 @@ import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
 import { calcularDesgloseCobro } from '../../lib/calculosCobro'
 import { registrarAuditoria, registrarEdicionAuditoria, registrarEliminacionAuditoria } from '../../lib/auditoria'
-import { MESES, getLocalDateStr, getNombreSocioCobro, getPerdonazoVigente } from '../../lib/formatters'
+import { MESES, getLocalDateStr, getNombreSocioCobro, getPerdonazoVigente, formatResumenGrupo } from '../../lib/formatters'
 import ConfirmMotivoModal from '../modals/ConfirmMotivoModal'
 import AbrirMesModal from '../modals/AbrirMesModal'
 import CobrarModal from '../modals/CobrarModal'
@@ -29,7 +29,8 @@ import {
   X,
   ShieldAlert,
   Edit2,
-  Trash2
+  Trash2,
+  Layers
 } from 'lucide-react'
 
 export default function CobrarView() {
@@ -124,44 +125,86 @@ export default function CobrarView() {
         return
       }
 
-      const { data: cData, error: cError } = await supabase
-        .from('cobros_servicios')
-        .select(`
-          *,
-          unidades_cobro (
-            id,
-            numero_identificador,
-            nombres_titulares,
-            tipo,
-            subtipo_fijo,
-            cantidad_puestos,
-            codigo_tarifador,
-            ultima_lectura,
-            socios (
+      const [{ data: cData, error: cError }, { data: hijosData }] = await Promise.all([
+        supabase
+          .from('cobros_servicios')
+          .select(`
+            *,
+            unidades_cobro (
               id,
-              nombre,
-              telefono,
-              fecha_pago_especial,
-              activo
+              numero_identificador,
+              nombres_titulares,
+              tipo,
+              subtipo_fijo,
+              cantidad_puestos,
+              codigo_tarifador,
+              ultima_lectura,
+              grupo_padre_id,
+              nombre_grupo,
+              monto_fijo_personalizado,
+              monto_guardia_personalizado,
+              monto_agua_personalizado,
+              monto_luz_personalizado,
+              detalle_tarifa_personalizada,
+              socios (
+                id,
+                nombre,
+                telefono,
+                fecha_pago_especial,
+                activo
+              )
+            ),
+            pagos_servicios (
+              id,
+              monto,
+              metodo_pago,
+              nro_talonario_fisico,
+              estado,
+              fecha_pago
             )
-          ),
-          pagos_servicios (
-            id,
-            monto,
-            metodo_pago,
-            nro_talonario_fisico,
-            estado,
-            fecha_pago
-          )
-        `)
-        .eq('periodo_id', pData.id)
-        .order('created_at', { ascending: true })
+          `)
+          .eq('periodo_id', pData.id)
+          .order('created_at', { ascending: true }),
+        supabase
+          .from('unidades_cobro')
+          .select('id, grupo_padre_id, numero_identificador, socios (id, nombre)')
+          .not('grupo_padre_id', 'is', null),
+      ])
 
       if (cError) throw cError
 
+      const hijosPorPadre = {}
+      ;(hijosData || []).forEach((h) => {
+        if (h.grupo_padre_id) {
+          if (!hijosPorPadre[h.grupo_padre_id]) hijosPorPadre[h.grupo_padre_id] = []
+          hijosPorPadre[h.grupo_padre_id].push(h)
+        }
+      })
+
       const processed = (cData || []).map((cobro) => {
         const pagosActivos = (cobro.pagos_servicios || []).filter((p) => p.estado === 'activo')
-        const socio = cobro.unidades_cobro?.socios
+        const unidad = cobro.unidades_cobro
+        const socio = unidad?.socios
+        const hijos = hijosPorPadre[cobro.unidad_id] || []
+        const nombreLider = getNombreSocioCobro(cobro)
+        const resumenGrupo = formatResumenGrupo(unidad, hijos, nombreLider)
+
+        const montoFijoPers =
+          cobro.modalidad_aplicada === 'personalizado'
+            ? unidad?.monto_fijo_personalizado ?? cobro.monto_base
+            : null
+        const montoGuardiaPers =
+          cobro.modalidad_aplicada === 'personalizado'
+            ? unidad?.monto_guardia_personalizado ?? cobro.monto_guardia
+            : null
+        const montoAguaPers =
+          cobro.modalidad_aplicada === 'personalizado'
+            ? unidad?.monto_agua_personalizado ?? cobro.monto_agua
+            : null
+        const montoLuzPers =
+          cobro.modalidad_aplicada === 'personalizado'
+            ? unidad?.monto_luz_personalizado ?? cobro.monto_luz_grupo
+            : null
 
         const desglose = calcularDesgloseCobro({
           modalidadAplicada: cobro.modalidad_aplicada,
@@ -182,12 +225,17 @@ export default function CobrarView() {
           montoGuardiaEditado: cobro.monto_guardia,
           montoAguaEditado: cobro.monto_agua,
           montoLuzGrupoEditado: cobro.monto_luz_grupo,
+          montoFijoPersonalizado: montoFijoPers,
+          montoGuardiaPersonalizado: montoGuardiaPers,
+          montoAguaPersonalizado: montoAguaPers,
+          montoLuzPersonalizado: montoLuzPers,
         })
 
         return {
           ...cobro,
           ...desglose,
           pagosActivos,
+          resumenGrupo,
         }
       })
 
@@ -360,6 +408,10 @@ export default function CobrarView() {
         montoGuardiaEditado: cobro.monto_guardia,
         montoAguaEditado: cobro.monto_agua,
         montoLuzGrupoEditado: cobro.monto_luz_grupo,
+        montoFijoPersonalizado: cobro.unidades_cobro?.monto_fijo_personalizado ?? cobro.monto_base,
+        montoGuardiaPersonalizado: cobro.unidades_cobro?.monto_guardia_personalizado ?? cobro.monto_guardia,
+        montoAguaPersonalizado: cobro.unidades_cobro?.monto_agua_personalizado ?? cobro.monto_agua,
+        montoLuzPersonalizado: cobro.unidades_cobro?.monto_luz_personalizado ?? cobro.monto_luz_grupo,
       })
 
       await supabase
@@ -670,14 +722,24 @@ export default function CobrarView() {
     }
   }
 
-  // Filtrado de cobros de socios (usando nombre histórico si existe)
+  // Filtrado de cobros de socios (usando nombre histórico y miembros de grupo si existe)
   const filteredCobros = cobros.filter((c) => {
     const term = searchTerm.toLowerCase()
     const socioName = getNombreSocioCobro(c).toLowerCase()
     const puestoId = c.unidades_cobro?.numero_identificador?.toLowerCase() || ''
     const tarifadorCode = c.unidades_cobro?.codigo_tarifador?.toLowerCase() || ''
+    const grupoPuestos = c.resumenGrupo?.puestosLabel?.toLowerCase() || ''
+    const grupoSocios = c.resumenGrupo?.sociosLabel?.toLowerCase() || ''
+    const nombreGrupo = c.unidades_cobro?.nombre_grupo?.toLowerCase() || ''
 
-    const matchesSearch = !term || socioName.includes(term) || puestoId.includes(term) || tarifadorCode.includes(term)
+    const matchesSearch =
+      !term ||
+      socioName.includes(term) ||
+      puestoId.includes(term) ||
+      tarifadorCode.includes(term) ||
+      grupoPuestos.includes(term) ||
+      grupoSocios.includes(term) ||
+      nombreGrupo.includes(term)
     if (!matchesSearch) return false
 
     if (filterEstado === 'pendiente') return c.estado === 'pendiente'
@@ -1429,9 +1491,20 @@ export default function CobrarView() {
                         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
                           <div className="min-w-0 flex-1">
                             <div className="flex flex-wrap items-center gap-2">
-                              <h4 className="font-bold text-sm text-slate-900 truncate">
-                                {unidad?.numero_identificador} • {nombreSocio}
+                              <span className="px-2 py-0.5 rounded-lg bg-slate-900 text-white text-xs font-extrabold">
+                                {cobro.resumenGrupo?.esGrupo
+                                  ? cobro.resumenGrupo.puestosLabel
+                                  : unidad?.numero_identificador}
+                              </span>
+                              <h4 className="font-bold text-sm sm:text-base text-slate-900 truncate">
+                                {cobro.resumenGrupo?.esGrupo ? cobro.resumenGrupo.sociosLabel : nombreSocio}
                               </h4>
+                              {unidad?.nombre_grupo && (
+                                <span className="text-[10px] px-2 py-0.5 bg-purple-100 text-purple-800 rounded font-bold inline-flex items-center gap-1">
+                                  <Layers className="w-3 h-3" />
+                                  {unidad.nombre_grupo}
+                                </span>
+                              )}
                               {cobro.nombre_socio_historico && (
                                 <span className="text-[10px] px-1.5 py-0.5 bg-slate-100 text-slate-600 rounded font-medium">
                                   Titular histórico
@@ -1454,9 +1527,16 @@ export default function CobrarView() {
                               <span>
                                 Modalidad:{' '}
                                 <strong className="text-slate-700 capitalize">
-                                  {cobro.modalidad_aplicada.replace('_', ' ')}
+                                  {cobro.modalidad_aplicada === 'personalizado'
+                                    ? 'Fijo Personalizado'
+                                    : cobro.modalidad_aplicada.replace('_', ' ')}
                                 </strong>
                               </span>
+                              {unidad?.detalle_tarifa_personalizada && cobro.modalidad_aplicada === 'personalizado' && (
+                                <span className="bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded border border-blue-200">
+                                  {unidad.detalle_tarifa_personalizada}
+                                </span>
+                              )}
                               {(cobro.cantidad_puestos_aplicada || 1) > 1 && (
                                 <span className="bg-purple-50 text-purple-700 px-1.5 py-0.5 rounded font-semibold border border-purple-200">
                                   {cobro.cantidad_puestos_aplicada} puestos agrupados
@@ -1687,101 +1767,103 @@ export default function CobrarView() {
 
       {/* Modal: Registrar Pago Real de Factura de Luz */}
       {isPagoFacturaModalOpen && periodo && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-sm overflow-y-auto">
-          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-md my-8 overflow-hidden">
-            <div className="bg-slate-900 px-6 py-4 text-white flex items-center justify-between">
-              <div>
-                <h3 className="font-bold text-base">Registrar Pago de Factura de Luz</h3>
-                <p className="text-xs text-slate-400">
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-2 sm:p-4 bg-black/60 backdrop-blur-sm">
+          <div className="w-full max-w-md max-h-[88dvh] sm:max-h-[90dvh] flex flex-col overflow-hidden rounded-2xl bg-white shadow-2xl border border-slate-200">
+            <div className="shrink-0 bg-slate-900 px-5 py-3.5 text-white flex items-center justify-between">
+              <div className="min-w-0">
+                <h3 className="font-bold text-sm sm:text-base truncate">Registrar Pago de Factura de Luz</h3>
+                <p className="text-[11px] sm:text-xs text-slate-400 truncate">
                   {MESES[selectedMes]} {selectedAnio} • Total: {parseFloat(periodo.factura_luz_bs).toFixed(2)} Bs
                 </p>
               </div>
-              <button onClick={() => setIsPagoFacturaModalOpen(false)}>
-                <X className="w-5 h-5 text-slate-400 hover:text-white" />
+              <button type="button" onClick={() => setIsPagoFacturaModalOpen(false)} className="p-1.5 text-slate-300 hover:text-white shrink-0">
+                <X className="w-5 h-5" />
               </button>
             </div>
 
-            <form onSubmit={handleConfirmarPagoFacturaLuz} className="p-6 space-y-4">
-              <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-900">
-                Al confirmar, se marcará la factura como <strong>Pagada</strong> y se creará el egreso automático en{' '}
-                <strong>Caja Servicios</strong> por <strong>{parseFloat(periodo.factura_luz_bs).toFixed(2)} Bs</strong>.
-              </div>
+            <form onSubmit={handleConfirmarPagoFacturaLuz} className="flex flex-col flex-1 min-h-0 overflow-hidden">
+              <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-4 sm:p-6 space-y-4">
+                <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-900">
+                  Al confirmar, se marcará la factura como <strong>Pagada</strong> y se creará el egreso automático en{' '}
+                  <strong>Caja Servicios</strong> por <strong>{parseFloat(periodo.factura_luz_bs).toFixed(2)} Bs</strong>.
+                </div>
 
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">Fecha Real de Pago</label>
-                <input
-                  type="date"
-                  required
-                  value={fechaPagoFactura}
-                  onChange={(e) => setFechaPagoFactura(e.target.value)}
-                  className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-300 rounded-xl"
-                />
-              </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">Fecha Real de Pago</label>
+                  <input
+                    type="date"
+                    required
+                    value={fechaPagoFactura}
+                    onChange={(e) => setFechaPagoFactura(e.target.value)}
+                    className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-300 rounded-xl"
+                  />
+                </div>
 
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1.5">Método de Pago</label>
-                <div className="grid grid-cols-2 gap-3">
-                  <button
-                    type="button"
-                    onClick={() => setMetodoPagoFactura('efectivo')}
-                    className={`py-2 px-3 rounded-xl border text-xs font-bold flex items-center justify-center gap-2 ${
-                      metodoPagoFactura === 'efectivo'
-                        ? 'bg-emerald-600 text-white border-emerald-600'
-                        : 'bg-slate-50 text-slate-700 border-slate-300'
-                    }`}
-                  >
-                    <Coins className="w-4 h-4" />
-                    <span>Efectivo</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setMetodoPagoFactura('qr')}
-                    className={`py-2 px-3 rounded-xl border text-xs font-bold flex items-center justify-center gap-2 ${
-                      metodoPagoFactura === 'qr'
-                        ? 'bg-blue-600 text-white border-blue-600'
-                        : 'bg-slate-50 text-slate-700 border-slate-300'
-                    }`}
-                  >
-                    <QrCode className="w-4 h-4" />
-                    <span>QR / Banco</span>
-                  </button>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1.5">Método de Pago</label>
+                  <div className="grid grid-cols-2 gap-3">
+                    <button
+                      type="button"
+                      onClick={() => setMetodoPagoFactura('efectivo')}
+                      className={`py-2 px-3 rounded-xl border text-xs font-bold flex items-center justify-center gap-2 ${
+                        metodoPagoFactura === 'efectivo'
+                          ? 'bg-emerald-600 text-white border-emerald-600'
+                          : 'bg-slate-50 text-slate-700 border-slate-300'
+                      }`}
+                    >
+                      <Coins className="w-4 h-4" />
+                      <span>Efectivo</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setMetodoPagoFactura('qr')}
+                      className={`py-2 px-3 rounded-xl border text-xs font-bold flex items-center justify-center gap-2 ${
+                        metodoPagoFactura === 'qr'
+                          ? 'bg-blue-600 text-white border-blue-600'
+                          : 'bg-slate-50 text-slate-700 border-slate-300'
+                      }`}
+                    >
+                      <QrCode className="w-4 h-4" />
+                      <span>QR / Banco</span>
+                    </button>
+                  </div>
+                </div>
+
+                <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-xs">
+                  <span className="text-slate-600">Comprobante Pagado (Drive):</span>
+                  <div className="flex items-center gap-2">
+                    {fotoPagoFactura && (
+                      <a href={fotoPagoFactura} target="_blank" rel="noreferrer" className="text-blue-600 underline">
+                        Ver
+                      </a>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => setIsPhotoFacturaOpen(true)}
+                      className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 rounded-xl font-semibold text-slate-700 flex items-center gap-1"
+                    >
+                      <Camera className="w-3.5 h-3.5" />
+                      <span>{fotoPagoFactura ? 'Cambiar Foto' : 'Subir Comprobante'}</span>
+                    </button>
+                  </div>
                 </div>
               </div>
 
-              <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-xs">
-                <span className="text-slate-600">Comprobante Pagado (Drive):</span>
-                <div className="flex items-center gap-2">
-                  {fotoPagoFactura && (
-                    <a href={fotoPagoFactura} target="_blank" rel="noreferrer" className="text-blue-600 underline">
-                      Ver
-                    </a>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => setIsPhotoFacturaOpen(true)}
-                    className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 rounded-xl font-semibold text-slate-700 flex items-center gap-1"
-                  >
-                    <Camera className="w-3.5 h-3.5" />
-                    <span>{fotoPagoFactura ? 'Cambiar Foto' : 'Subir Comprobante'}</span>
-                  </button>
-                </div>
-              </div>
-
-              <div className="pt-2 flex justify-end gap-2 border-t border-slate-100">
+              <div className="shrink-0 border-t border-slate-200 bg-white px-4 py-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] flex items-center justify-end gap-2">
                 <button
                   type="button"
                   onClick={() => setIsPagoFacturaModalOpen(false)}
-                  className="px-4 py-2 text-xs text-slate-600"
+                  className="px-4 py-2 text-xs font-semibold text-slate-600"
                 >
                   Cancelar
                 </button>
                 <button
                   type="submit"
                   disabled={savingFacturaPago}
-                  className="px-5 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold flex items-center gap-1"
+                  className="px-4 py-2.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold flex items-center gap-1"
                 >
                   <CheckCircle2 className="w-4 h-4" />
-                  <span>{savingFacturaPago ? 'Registrando...' : 'Confirmar Pago de Factura'}</span>
+                  <span>{savingFacturaPago ? 'Registrando...' : 'Confirmar Pago'}</span>
                 </button>
               </div>
             </form>
@@ -1791,21 +1873,22 @@ export default function CobrarView() {
 
       {/* Modal: Cobrar a Externo */}
       {selectedExternoPago && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-sm overflow-y-auto">
-          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-md my-8 overflow-hidden">
-            <div className="bg-slate-900 px-6 py-4 text-white flex items-center justify-between">
-              <div>
-                <h3 className="font-bold text-base">Cobro Externo (Guardia y Agua)</h3>
-                <p className="text-xs text-slate-400">
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-2 sm:p-4 bg-black/60 backdrop-blur-sm">
+          <div className="w-full max-w-md max-h-[88dvh] sm:max-h-[90dvh] flex flex-col overflow-hidden rounded-2xl bg-white shadow-2xl border border-slate-200">
+            <div className="shrink-0 bg-slate-900 px-5 py-3.5 text-white flex items-center justify-between">
+              <div className="min-w-0">
+                <h3 className="font-bold text-sm sm:text-base truncate">Cobro Externo (Guardia y Agua)</h3>
+                <p className="text-[11px] sm:text-xs text-slate-400 truncate">
                   {selectedExternoPago.nombre_completo} • {MESES[selectedMes]} {selectedAnio}
                 </p>
               </div>
-              <button onClick={() => setSelectedExternoPago(null)}>
-                <X className="w-5 h-5 text-slate-400 hover:text-white" />
+              <button type="button" onClick={() => setSelectedExternoPago(null)} className="p-1.5 text-slate-300 hover:text-white shrink-0">
+                <X className="w-5 h-5" />
               </button>
             </div>
 
-            <form onSubmit={handleSaveCobroExterno} className="p-6 space-y-4">
+            <form onSubmit={handleSaveCobroExterno} className="flex flex-col flex-1 min-h-0 overflow-hidden">
+              <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-4 sm:p-6 space-y-4">
               <div className="p-3 bg-indigo-50 border border-indigo-200 rounded-xl space-y-2.5">
                 <div className="flex items-center justify-between text-xs">
                   <span className="font-bold text-indigo-950">Desglose Guardia y Agua</span>
@@ -1921,14 +2004,16 @@ export default function CobrarView() {
                 />
               </div>
 
-              <div className="pt-2 flex justify-end gap-2 border-t border-slate-100">
-                <button type="button" onClick={() => setSelectedExternoPago(null)} className="px-4 py-2 text-xs text-slate-600">
+              </div>
+
+              <div className="shrink-0 border-t border-slate-200 bg-white px-4 py-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] flex items-center justify-end gap-2">
+                <button type="button" onClick={() => setSelectedExternoPago(null)} className="px-4 py-2 text-xs font-semibold text-slate-600">
                   Cancelar
                 </button>
                 <button
                   type="submit"
                   disabled={savingExterno}
-                  className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold flex items-center gap-1"
+                  className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold flex items-center gap-1"
                 >
                   <CheckCircle2 className="w-4 h-4" />
                   <span>{savingExterno ? 'Guardando...' : 'Confirmar Cobro'}</span>

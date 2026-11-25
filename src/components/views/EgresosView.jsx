@@ -96,6 +96,16 @@ export default function EgresosView() {
   const [isPhotoLuzOpen, setIsPhotoLuzOpen] = useState(false)
   const [savingLuzPago, setSavingLuzPago] = useState(false)
 
+  // Modal Cargar / Editar Factura de Luz
+  const [isCargaLuzOpen, setIsCargaLuzOpen] = useState(false)
+  const [luzEnergiaInput, setLuzEnergiaInput] = useState('')
+  const [luzAlumbradoInput, setLuzAlumbradoInput] = useState('')
+  const [luzBasuraInput, setLuzBasuraInput] = useState('')
+  const [luzKwhInput, setLuzKwhInput] = useState('')
+  const [fotoFacturaLuzInput, setFotoFacturaLuzInput] = useState('')
+  const [isPhotoFacturaLuzOpen, setIsPhotoFacturaLuzOpen] = useState(false)
+  const [savingCargaLuz, setSavingCargaLuz] = useState(false)
+
   // Modal Cargar / Editar Factura de Agua (Pendiente de pago)
   const [isCargaAguaOpen, setIsCargaAguaOpen] = useState(false)
   const [aguaPotableInput, setAguaPotableInput] = useState('')
@@ -508,9 +518,51 @@ export default function EgresosView() {
     setSaving(true)
     setSavingGuardia(true)
     setSavingSueldo(true)
+    setSavingCargaLuz(true)
 
     try {
-      if (entity === 'egreso' && tipo === 'edicion') {
+      if (entity === 'luz' && tipo === 'edicion') {
+        const luzFields = {
+          factura_energia_bs: luzEnergiaNum,
+          factura_alumbrado_bs: luzAlumbradoNum,
+          factura_basura_bs: luzBasuraNum,
+          factura_luz_bs: totalFacturaLuzModal,
+          factura_luz_kwh: luzKwhNum,
+          precio_kwh_calculado: parseFloat(precioKwhModal) || 0,
+          factura_luz_drive_url: fotoFacturaLuzInput || null,
+        }
+
+        await registrarEdicionAuditoria({
+          usuarioId: user?.id,
+          modulo: 'Gastos Fijos — Factura de Luz',
+          tabla: 'periodos_mensuales',
+          registroId: target.id,
+          motivo,
+          resumen: `Edición de Factura de Luz ${MESES[guardiaMes]} ${guardiaAnio}`,
+          datosAnteriores: {
+            factura_energia_bs: target.factura_energia_bs,
+            factura_alumbrado_bs: target.factura_alumbrado_bs,
+            factura_basura_bs: target.factura_basura_bs,
+            factura_luz_bs: target.factura_luz_bs,
+            factura_luz_kwh: target.factura_luz_kwh,
+            precio_kwh_calculado: target.precio_kwh_calculado,
+            factura_luz_drive_url: target.factura_luz_drive_url,
+          },
+          datosNuevos: luzFields,
+        })
+
+        const { error } = await supabase
+          .from('periodos_mensuales')
+          .update(luzFields)
+          .eq('id', target.id)
+        if (error) throw error
+
+        setIsCargaLuzOpen(false)
+        setStatusMessage({
+          type: 'success',
+          text: `Factura de luz de ${MESES[guardiaMes]} ${guardiaAnio} actualizada (${totalFacturaLuzModal.toFixed(2)} Bs) y auditada.`,
+        })
+      } else if (entity === 'egreso' && tipo === 'edicion') {
         const montoNum = parseFloat(monto)
         const catClean = categoria.trim()
         const datosNuevos = {
@@ -664,6 +716,7 @@ export default function EgresosView() {
       setSaving(false)
       setSavingGuardia(false)
       setSavingSueldo(false)
+      setSavingCargaLuz(false)
     }
   }
 
@@ -690,6 +743,121 @@ export default function EgresosView() {
     .filter((p) => !p.anulado)
     .reduce((s, p) => s + (parseFloat(p.monto) || 0), 0)
   const saldoPendienteGuardia = Math.max(0, (parseFloat(sueldoMensual) || 0) - totalAdelantosGuardia)
+
+  const openCargaLuzModal = () => {
+    const pEn = parseFloat(periodoFijo?.factura_energia_bs) || 0
+    const pAl = parseFloat(periodoFijo?.factura_alumbrado_bs) || 0
+    const pBa = parseFloat(periodoFijo?.factura_basura_bs) || 0
+    const totalLegacy = parseFloat(periodoFijo?.factura_luz_bs) || 0
+    const hasDesglose = pEn > 0 || pAl > 0 || pBa > 0
+
+    if (hasDesglose) {
+      setLuzEnergiaInput(String(pEn))
+      setLuzAlumbradoInput(String(pAl))
+      setLuzBasuraInput(String(pBa))
+    } else if (totalLegacy > 0) {
+      setLuzEnergiaInput(String(totalLegacy))
+      setLuzAlumbradoInput('0')
+      setLuzBasuraInput('0')
+    } else {
+      setLuzEnergiaInput('')
+      setLuzAlumbradoInput('0')
+      setLuzBasuraInput('0')
+    }
+
+    setLuzKwhInput(periodoFijo?.factura_luz_kwh ? String(periodoFijo.factura_luz_kwh) : '')
+    setFotoFacturaLuzInput(periodoFijo?.factura_luz_drive_url || '')
+    setIsCargaLuzOpen(true)
+  }
+
+  const luzEnergiaNum = Math.round((parseFloat(luzEnergiaInput) || 0) * 100) / 100
+  const luzAlumbradoNum = Math.round((parseFloat(luzAlumbradoInput) || 0) * 100) / 100
+  const luzBasuraNum = Math.round((parseFloat(luzBasuraInput) || 0) * 100) / 100
+  const totalFacturaLuzModal = Math.round((luzEnergiaNum + luzAlumbradoNum + luzBasuraNum) * 100) / 100
+  const luzKwhNum = Math.round((parseFloat(luzKwhInput) || 0) * 100) / 100
+  const precioKwhModal = luzKwhNum > 0 ? (luzEnergiaNum / luzKwhNum).toFixed(4) : '0.0000'
+
+  const handleSaveCargaLuz = async (e) => {
+    e.preventDefault()
+    if (totalFacturaLuzModal <= 0) {
+      setStatusMessage({ type: 'error', text: 'El total de la factura de luz debe ser mayor a 0.' })
+      return
+    }
+    if (luzKwhNum <= 0) {
+      setStatusMessage({ type: 'error', text: 'Ingresa el total de kWh consumidos mayor a 0.' })
+      return
+    }
+
+    // Si ya había factura de luz cargada, exigir motivo obligatorio de edición
+    if (periodoFijo?.id && (parseFloat(periodoFijo.factura_luz_bs) || 0) > 0) {
+      setConfirmState({
+        open: true,
+        tipo: 'edicion',
+        entity: 'luz',
+        target: periodoFijo,
+        advertencia: 'Recuerda revisar los cobros si ya se abrió el periodo en Cobros Mensuales.',
+      })
+      return
+    }
+
+    setSavingCargaLuz(true)
+    try {
+      const luzFields = {
+        factura_energia_bs: luzEnergiaNum,
+        factura_alumbrado_bs: luzAlumbradoNum,
+        factura_basura_bs: luzBasuraNum,
+        factura_luz_bs: totalFacturaLuzModal,
+        factura_luz_kwh: luzKwhNum,
+        precio_kwh_calculado: parseFloat(precioKwhModal) || 0,
+        factura_luz_drive_url: fotoFacturaLuzInput || null,
+        estado_pago_factura: periodoFijo?.estado_pago_factura || 'pendiente_pago',
+      }
+
+      if (periodoFijo?.id) {
+        const { error } = await supabase.from('periodos_mensuales').update(luzFields).eq('id', periodoFijo.id)
+        if (error) throw error
+
+        await registrarAuditoria({
+          usuarioId: user?.id,
+          accion: 'CARGA_FACTURA_LUZ',
+          detalleJson: {
+            descripcion: `Factura de Luz ${MESES[guardiaMes]} ${guardiaAnio}: ${totalFacturaLuzModal.toFixed(2)} Bs (${luzKwhNum} kWh, ${precioKwhModal} Bs/kWh)`,
+            periodo_id: periodoFijo.id,
+            ...luzFields,
+          },
+        })
+      } else {
+        const { data: createdP, error } = await supabase
+          .from('periodos_mensuales')
+          .insert([{ mes: guardiaMes, anio: guardiaAnio, ...luzFields }])
+          .select()
+          .single()
+        if (error) throw error
+
+        await registrarAuditoria({
+          usuarioId: user?.id,
+          accion: 'CARGA_FACTURA_LUZ',
+          detalleJson: {
+            descripcion: `Factura de Luz ${MESES[guardiaMes]} ${guardiaAnio}: ${totalFacturaLuzModal.toFixed(2)} Bs (${luzKwhNum} kWh, ${precioKwhModal} Bs/kWh)`,
+            periodo_id: createdP?.id,
+            ...luzFields,
+          },
+        })
+      }
+
+      setStatusMessage({
+        type: 'success',
+        text: `Factura de luz (${totalFacturaLuzModal.toFixed(2)} Bs) guardada como Pendiente de Pago.`,
+      })
+      setIsCargaLuzOpen(false)
+      await fetchGuardiaData()
+    } catch (err) {
+      console.error(err)
+      setStatusMessage({ type: 'error', text: 'Error al guardar factura de luz: ' + err.message })
+    } finally {
+      setSavingCargaLuz(false)
+    }
+  }
 
   // Handlers de Gastos Fijos del Mes (Luz y Agua)
   const openPagoLuzModal = () => {
@@ -1368,15 +1536,27 @@ export default function EgresosView() {
                       )}
                     </div>
 
-                    {isAdmin && luzCargada && !luzPagada && (
-                      <button
-                        type="button"
-                        onClick={openPagoLuzModal}
-                        className="w-full py-2 px-3 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 shadow-sm"
-                      >
-                        <CheckCircle2 className="w-3.5 h-3.5" />
-                        <span>Registrar Pago de Luz</span>
-                      </button>
+                    {isAdmin && !luzPagada && (
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={openCargaLuzModal}
+                          className="flex-1 py-2 px-3 bg-white hover:bg-amber-50 text-amber-800 border border-amber-300 rounded-xl text-xs font-bold flex items-center justify-center gap-1"
+                        >
+                          <Camera className="w-3.5 h-3.5" />
+                          <span>{luzCargada ? 'Editar Factura' : 'Cargar Factura'}</span>
+                        </button>
+                        {luzCargada && (
+                          <button
+                            type="button"
+                            onClick={openPagoLuzModal}
+                            className="flex-1 py-2 px-3 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1 shadow-sm"
+                          >
+                            <CheckCircle2 className="w-3.5 h-3.5" />
+                            <span>Registrar Pago de Luz</span>
+                          </button>
+                        )}
+                      </div>
                     )}
                   </div>
 
@@ -1748,26 +1928,27 @@ export default function EgresosView() {
 
       {/* Modal Crear / Editar Egreso */}
       {isNewModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-sm overflow-y-auto animate-fadeIn">
-          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-md my-8 overflow-hidden">
-            <div className="bg-slate-900 px-6 py-4 text-white flex items-center justify-between">
-              <div className="flex items-center space-x-2.5">
-                <div className="p-2 bg-amber-500/20 text-amber-400 rounded-lg">
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-2 sm:p-4 bg-black/60 backdrop-blur-sm animate-fadeIn">
+          <div className="w-full max-w-md max-h-[88dvh] sm:max-h-[90dvh] flex flex-col overflow-hidden rounded-2xl bg-white shadow-2xl border border-slate-200">
+            <div className="shrink-0 bg-slate-900 px-5 py-3.5 text-white flex items-center justify-between">
+              <div className="flex items-center space-x-2.5 min-w-0">
+                <div className="p-2 bg-amber-500/20 text-amber-400 rounded-lg shrink-0">
                   <ArrowDownCircle className="w-5 h-5" />
                 </div>
-                <div>
-                  <h3 className="font-bold text-base leading-tight">
+                <div className="min-w-0">
+                  <h3 className="font-bold text-sm sm:text-base leading-tight truncate">
                     {editingEgreso ? 'Editar Egreso (Auditado)' : 'Registrar Egreso'}
                   </h3>
-                  <p className="text-xs text-slate-400">Descargo de fondos con respaldo fotográfico</p>
+                  <p className="text-[11px] sm:text-xs text-slate-400 truncate">Descargo de fondos con respaldo fotográfico</p>
                 </div>
               </div>
-              <button onClick={() => setIsNewModalOpen(false)}>
-                <X className="w-5 h-5 text-slate-400 hover:text-white" />
+              <button type="button" onClick={() => setIsNewModalOpen(false)} className="p-1.5 text-slate-300 hover:text-white shrink-0">
+                <X className="w-5 h-5" />
               </button>
             </div>
 
-            <form onSubmit={handleSaveEgreso} className="p-6 space-y-4">
+            <form onSubmit={handleSaveEgreso} className="flex flex-col flex-1 min-h-0 overflow-hidden">
+              <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-4 sm:p-6 space-y-4">
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1.5">Caja *</label>
                 <div className="grid grid-cols-2 gap-3">
@@ -1865,11 +2046,13 @@ export default function EgresosView() {
                 </div>
               </div>
 
-              <div className="pt-2 flex items-center justify-end gap-2.5 border-t border-slate-100">
+              </div>
+
+              <div className="shrink-0 border-t border-slate-200 bg-white px-4 py-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] flex items-center justify-end gap-2">
                 <button type="button" onClick={() => setIsNewModalOpen(false)} className="px-4 py-2 text-xs font-semibold text-slate-600">
                   Cancelar
                 </button>
-                <button type="submit" disabled={saving} className="px-5 py-2.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold shadow-md">
+                <button type="submit" disabled={saving} className="px-4 py-2.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold shadow-md">
                   {saving ? 'Guardando...' : editingEgreso ? 'Actualizar Egreso' : 'Confirmar Egreso'}
                 </button>
               </div>
@@ -1892,23 +2075,24 @@ export default function EgresosView() {
 
       {/* Modal Crear / Editar Pago Guardia */}
       {isGuardiaModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-sm overflow-y-auto">
-          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-md my-8 overflow-hidden">
-            <div className="bg-slate-900 px-6 py-4 text-white flex items-center justify-between">
-              <div>
-                <h3 className="font-bold text-base">
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-2 sm:p-4 bg-black/60 backdrop-blur-sm">
+          <div className="w-full max-w-md max-h-[88dvh] sm:max-h-[90dvh] flex flex-col overflow-hidden rounded-2xl bg-white shadow-2xl border border-slate-200">
+            <div className="shrink-0 bg-slate-900 px-5 py-3.5 text-white flex items-center justify-between">
+              <div className="min-w-0">
+                <h3 className="font-bold text-sm sm:text-base truncate">
                   {editingGuardia ? 'Editar Pago Guardia (Auditado)' : 'Adelanto / Pago del Guardia'}
                 </h3>
-                <p className="text-xs text-slate-400">
+                <p className="text-[11px] sm:text-xs text-slate-400 truncate">
                   {MESES[guardiaMes]} {guardiaAnio} • Sincronizado con Egresos Servicios
                 </p>
               </div>
-              <button onClick={() => setIsGuardiaModalOpen(false)}>
-                <X className="w-5 h-5 text-slate-400 hover:text-white" />
+              <button type="button" onClick={() => setIsGuardiaModalOpen(false)} className="p-1.5 text-slate-300 hover:text-white shrink-0">
+                <X className="w-5 h-5" />
               </button>
             </div>
 
-            <form onSubmit={handleSavePagoGuardia} className="p-6 space-y-4">
+            <form onSubmit={handleSavePagoGuardia} className="flex flex-col flex-1 min-h-0 overflow-hidden">
+              <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-4 sm:p-6 space-y-4">
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">Tipo de Pago</label>
                 <select value={gTipo} onChange={(e) => setGTipo(e.target.value)} className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-300 rounded-xl font-bold">
@@ -1965,11 +2149,13 @@ export default function EgresosView() {
                 </div>
               </div>
 
-              <div className="pt-2 flex justify-end gap-2 border-t border-slate-100">
-                <button type="button" onClick={() => setIsGuardiaModalOpen(false)} className="px-4 py-2 text-xs text-slate-600">
+              </div>
+
+              <div className="shrink-0 border-t border-slate-200 bg-white px-4 py-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] flex items-center justify-end gap-2">
+                <button type="button" onClick={() => setIsGuardiaModalOpen(false)} className="px-4 py-2 text-xs font-semibold text-slate-600">
                   Cancelar
                 </button>
-                <button type="submit" disabled={savingGuardia} className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center gap-1">
+                <button type="submit" disabled={savingGuardia} className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center gap-1">
                   <CheckCircle2 className="w-4 h-4" />
                   <span>{savingGuardia ? 'Guardando...' : editingGuardia ? 'Actualizar Pago' : 'Confirmar Pago'}</span>
                 </button>
@@ -1991,23 +2177,169 @@ export default function EgresosView() {
         </div>
       )}
 
-      {/* Modal: Registrar Pago de Factura de Luz */}
-      {isPagoLuzOpen && periodoFijo && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-sm overflow-y-auto">
-          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-md my-8 overflow-hidden">
-            <div className="bg-slate-900 px-6 py-4 text-white flex items-center justify-between">
-              <div>
-                <h3 className="font-bold text-base">Registrar Pago de Factura de Luz</h3>
-                <p className="text-xs text-slate-400">
-                  {MESES[guardiaMes]} {guardiaAnio} • Total: {parseFloat(periodoFijo.factura_luz_bs || 0).toFixed(2)} Bs
+      {/* Modal: Cargar / Editar Factura de Luz */}
+      {isCargaLuzOpen && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-2 sm:p-4 bg-black/60 backdrop-blur-sm">
+          <div className="w-full max-w-md max-h-[88dvh] sm:max-h-[90dvh] flex flex-col overflow-hidden rounded-2xl bg-white shadow-2xl border border-slate-200">
+            <div className="shrink-0 bg-slate-900 px-5 py-3.5 text-white flex items-center justify-between">
+              <div className="min-w-0">
+                <h3 className="font-bold text-sm sm:text-base truncate">Factura de Luz del Mes</h3>
+                <p className="text-[11px] sm:text-xs text-slate-400 truncate">
+                  {MESES[guardiaMes]} {guardiaAnio} • Desglose exacto (precio/kWh usa solo Energía)
                 </p>
               </div>
-              <button onClick={() => setIsPagoLuzOpen(false)}>
-                <X className="w-5 h-5 text-slate-400 hover:text-white" />
+              <button type="button" onClick={() => setIsCargaLuzOpen(false)} className="p-1.5 text-slate-300 hover:text-white shrink-0">
+                <X className="w-5 h-5" />
               </button>
             </div>
 
-            <form onSubmit={handleConfirmarPagoLuz} className="p-6 space-y-4">
+            <form onSubmit={handleSaveCargaLuz} className="flex flex-col flex-1 min-h-0 overflow-hidden">
+              <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-4 sm:p-6 space-y-4">
+                <div className="bg-amber-50/70 p-3.5 rounded-xl border border-amber-200 space-y-3">
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-amber-900 block">
+                    Desglose de Factura de Luz (Centavos exactos)
+                  </span>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 mb-1">
+                        Consumo Energía (Bs) <span className="text-red-500">*</span>
+                      </label>
+                      <input
+                        type="number"
+                        inputMode="decimal"
+                        step="0.01"
+                        min="0"
+                        required
+                        value={luzEnergiaInput}
+                        onChange={(e) => setLuzEnergiaInput(e.target.value)}
+                        placeholder="0.00"
+                        className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-xl font-bold"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 mb-1">
+                        Alumbrado Público (Bs)
+                      </label>
+                      <input
+                        type="number"
+                        inputMode="decimal"
+                        step="0.01"
+                        min="0"
+                        value={luzAlumbradoInput}
+                        onChange={(e) => setLuzAlumbradoInput(e.target.value)}
+                        placeholder="0.00"
+                        className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-xl font-bold"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 mb-1">
+                        Recojo de Basura (Bs)
+                      </label>
+                      <input
+                        type="number"
+                        inputMode="decimal"
+                        step="0.01"
+                        min="0"
+                        value={luzBasuraInput}
+                        onChange={(e) => setLuzBasuraInput(e.target.value)}
+                        placeholder="0.00"
+                        className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-xl font-bold"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 mb-1">
+                        Total kWh Consumidos <span className="text-red-500">*</span>
+                      </label>
+                      <input
+                        type="number"
+                        inputMode="decimal"
+                        step="0.01"
+                        min="0.01"
+                        required
+                        value={luzKwhInput}
+                        onChange={(e) => setLuzKwhInput(e.target.value)}
+                        placeholder="0.00"
+                        className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-xl font-bold"
+                      />
+                    </div>
+                  </div>
+                  <div className="pt-2 border-t border-amber-200 flex items-center justify-between text-xs">
+                    <div>
+                      <span className="font-bold text-amber-950 block">Total Factura de Luz:</span>
+                      <span className="text-[10px] text-amber-700">Precio/kWh: {precioKwhModal} Bs</span>
+                    </div>
+                    <span className="text-base font-extrabold text-amber-800">{totalFacturaLuzModal.toFixed(2)} Bs</span>
+                  </div>
+                </div>
+
+                <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-xs">
+                  <span className="text-slate-600">Foto Factura de Luz (Drive):</span>
+                  <div className="flex items-center gap-2">
+                    {fotoFacturaLuzInput && (
+                      <a href={fotoFacturaLuzInput} target="_blank" rel="noreferrer" className="text-blue-600 underline">
+                        Ver
+                      </a>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => setIsPhotoFacturaLuzOpen(true)}
+                      className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 rounded-xl font-semibold text-slate-700 flex items-center gap-1"
+                    >
+                      <Camera className="w-3.5 h-3.5" />
+                      <span>{fotoFacturaLuzInput ? 'Cambiar Foto' : 'Subir Factura'}</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div className="shrink-0 border-t border-slate-200 bg-white px-4 py-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] flex items-center justify-end gap-2">
+                <button type="button" onClick={() => setIsCargaLuzOpen(false)} className="px-4 py-2 text-xs font-semibold text-slate-600">
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={savingCargaLuz}
+                  className="px-4 py-2.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold flex items-center gap-1"
+                >
+                  <Save className="w-4 h-4" />
+                  <span>{savingCargaLuz ? 'Guardando...' : 'Guardar Factura'}</span>
+                </button>
+              </div>
+            </form>
+          </div>
+
+          <FotoUploaderModal
+            isOpen={isPhotoFacturaLuzOpen}
+            onClose={() => setIsPhotoFacturaLuzOpen(false)}
+            onPhotoSaved={(url) => setFotoFacturaLuzInput(url)}
+            currentUrl={fotoFacturaLuzInput}
+            titulo={`Factura de Luz ${MESES[guardiaMes]} ${guardiaAnio}`}
+            categoria="Facturas_Generales"
+            anio={guardiaAnio}
+            mes={guardiaMes}
+            customName={`Factura_Luz_${guardiaAnio}-${guardiaMes}.jpg`}
+          />
+        </div>
+      )}
+
+      {/* Modal: Registrar Pago de Factura de Luz */}
+      {isPagoLuzOpen && periodoFijo && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-2 sm:p-4 bg-black/60 backdrop-blur-sm">
+          <div className="w-full max-w-md max-h-[88dvh] sm:max-h-[90dvh] flex flex-col overflow-hidden rounded-2xl bg-white shadow-2xl border border-slate-200">
+            <div className="shrink-0 bg-slate-900 px-5 py-3.5 text-white flex items-center justify-between">
+              <div className="min-w-0">
+                <h3 className="font-bold text-sm sm:text-base truncate">Registrar Pago de Factura de Luz</h3>
+                <p className="text-[11px] sm:text-xs text-slate-400 truncate">
+                  {MESES[guardiaMes]} {guardiaAnio} • Total: {parseFloat(periodoFijo.factura_luz_bs || 0).toFixed(2)} Bs
+                </p>
+              </div>
+              <button type="button" onClick={() => setIsPagoLuzOpen(false)} className="p-1.5 text-slate-300 hover:text-white shrink-0">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleConfirmarPagoLuz} className="flex flex-col flex-1 min-h-0 overflow-hidden">
+              <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-4 sm:p-6 space-y-4">
               <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-900">
                 Se marcará la factura como <strong>Pagada</strong> y se creará el egreso automático en{' '}
                 <strong>Caja Servicios</strong> por <strong>{parseFloat(periodoFijo.factura_luz_bs || 0).toFixed(2)} Bs</strong>.
@@ -2073,14 +2405,16 @@ export default function EgresosView() {
                 </div>
               </div>
 
-              <div className="pt-2 flex justify-end gap-2 border-t border-slate-100">
-                <button type="button" onClick={() => setIsPagoLuzOpen(false)} className="px-4 py-2 text-xs text-slate-600">
+              </div>
+
+              <div className="shrink-0 border-t border-slate-200 bg-white px-4 py-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] flex items-center justify-end gap-2">
+                <button type="button" onClick={() => setIsPagoLuzOpen(false)} className="px-4 py-2 text-xs font-semibold text-slate-600">
                   Cancelar
                 </button>
                 <button
                   type="submit"
                   disabled={savingLuzPago}
-                  className="px-5 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold flex items-center gap-1"
+                  className="px-4 py-2.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold flex items-center gap-1"
                 >
                   <CheckCircle2 className="w-4 h-4" />
                   <span>{savingLuzPago ? 'Registrando...' : 'Confirmar Pago de Luz'}</span>
@@ -2105,21 +2439,22 @@ export default function EgresosView() {
 
       {/* Modal: Cargar / Editar Factura de Agua (Pendiente de Pago) */}
       {isCargaAguaOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-sm overflow-y-auto">
-          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-md my-8 overflow-hidden">
-            <div className="bg-slate-900 px-6 py-4 text-white flex items-center justify-between">
-              <div>
-                <h3 className="font-bold text-base">Factura de Agua del Mes</h3>
-                <p className="text-xs text-slate-400">
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-2 sm:p-4 bg-black/60 backdrop-blur-sm">
+          <div className="w-full max-w-md max-h-[88dvh] sm:max-h-[90dvh] flex flex-col overflow-hidden rounded-2xl bg-white shadow-2xl border border-slate-200">
+            <div className="shrink-0 bg-slate-900 px-5 py-3.5 text-white flex items-center justify-between">
+              <div className="min-w-0">
+                <h3 className="font-bold text-sm sm:text-base truncate">Factura de Agua del Mes</h3>
+                <p className="text-[11px] sm:text-xs text-slate-400 truncate">
                   {MESES[guardiaMes]} {guardiaAnio} • Queda en Pendiente de Pago (sin descontar caja)
                 </p>
               </div>
-              <button onClick={() => setIsCargaAguaOpen(false)}>
-                <X className="w-5 h-5 text-slate-400 hover:text-white" />
+              <button type="button" onClick={() => setIsCargaAguaOpen(false)} className="p-1.5 text-slate-300 hover:text-white shrink-0">
+                <X className="w-5 h-5" />
               </button>
             </div>
 
-            <form onSubmit={handleSaveCargaAgua} className="p-6 space-y-4">
+            <form onSubmit={handleSaveCargaAgua} className="flex flex-col flex-1 min-h-0 overflow-hidden">
+              <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-4 sm:p-6 space-y-4">
               <div className="bg-blue-50/70 p-3.5 rounded-xl border border-blue-200 space-y-3">
                 <span className="text-[11px] font-bold uppercase tracking-wider text-blue-900 block">
                   Desglose de Factura de Agua (Centavos exactos)
@@ -2197,17 +2532,19 @@ export default function EgresosView() {
                 </div>
               </div>
 
-              <div className="pt-2 flex justify-end gap-2 border-t border-slate-100">
-                <button type="button" onClick={() => setIsCargaAguaOpen(false)} className="px-4 py-2 text-xs text-slate-600">
+              </div>
+
+              <div className="shrink-0 border-t border-slate-200 bg-white px-4 py-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] flex items-center justify-end gap-2">
+                <button type="button" onClick={() => setIsCargaAguaOpen(false)} className="px-4 py-2 text-xs font-semibold text-slate-600">
                   Cancelar
                 </button>
                 <button
                   type="submit"
                   disabled={savingCargaAgua}
-                  className="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold flex items-center gap-1"
+                  className="px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold flex items-center gap-1"
                 >
                   <Save className="w-4 h-4" />
-                  <span>{savingCargaAgua ? 'Guardando...' : 'Guardar Factura Pendiente'}</span>
+                  <span>{savingCargaAgua ? 'Guardando...' : 'Guardar Factura'}</span>
                 </button>
               </div>
             </form>
@@ -2229,21 +2566,22 @@ export default function EgresosView() {
 
       {/* Modal: Registrar Pago de Factura de Agua */}
       {isPagoAguaOpen && periodoFijo && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-sm overflow-y-auto">
-          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-md my-8 overflow-hidden">
-            <div className="bg-slate-900 px-6 py-4 text-white flex items-center justify-between">
-              <div>
-                <h3 className="font-bold text-base">Registrar Pago de Factura de Agua</h3>
-                <p className="text-xs text-slate-400">
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-2 sm:p-4 bg-black/60 backdrop-blur-sm">
+          <div className="w-full max-w-md max-h-[88dvh] sm:max-h-[90dvh] flex flex-col overflow-hidden rounded-2xl bg-white shadow-2xl border border-slate-200">
+            <div className="shrink-0 bg-slate-900 px-5 py-3.5 text-white flex items-center justify-between">
+              <div className="min-w-0">
+                <h3 className="font-bold text-sm sm:text-base truncate">Registrar Pago de Factura de Agua</h3>
+                <p className="text-[11px] sm:text-xs text-slate-400 truncate">
                   {MESES[guardiaMes]} {guardiaAnio} • Total: {parseFloat(periodoFijo.factura_agua_bs || 0).toFixed(2)} Bs
                 </p>
               </div>
-              <button onClick={() => setIsPagoAguaOpen(false)}>
-                <X className="w-5 h-5 text-slate-400 hover:text-white" />
+              <button type="button" onClick={() => setIsPagoAguaOpen(false)} className="p-1.5 text-slate-300 hover:text-white shrink-0">
+                <X className="w-5 h-5" />
               </button>
             </div>
 
-            <form onSubmit={handleConfirmarPagoAgua} className="p-6 space-y-4">
+            <form onSubmit={handleConfirmarPagoAgua} className="flex flex-col flex-1 min-h-0 overflow-hidden">
+              <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-4 sm:p-6 space-y-4">
               <div className="p-3 bg-blue-50 border border-blue-200 rounded-xl text-xs text-blue-900">
                 Se marcará la factura como <strong>Pagada</strong> y se creará el egreso automático en{' '}
                 <strong>Caja Servicios</strong> (categoría <em>Factura de Agua</em>) por{' '}
@@ -2310,14 +2648,16 @@ export default function EgresosView() {
                 </div>
               </div>
 
-              <div className="pt-2 flex justify-end gap-2 border-t border-slate-100">
-                <button type="button" onClick={() => setIsPagoAguaOpen(false)} className="px-4 py-2 text-xs text-slate-600">
+              </div>
+
+              <div className="shrink-0 border-t border-slate-200 bg-white px-4 py-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] flex items-center justify-end gap-2">
+                <button type="button" onClick={() => setIsPagoAguaOpen(false)} className="px-4 py-2 text-xs font-semibold text-slate-600">
                   Cancelar
                 </button>
                 <button
                   type="submit"
                   disabled={savingPagoAgua}
-                  className="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold flex items-center gap-1"
+                  className="px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold flex items-center gap-1"
                 >
                   <CheckCircle2 className="w-4 h-4" />
                   <span>{savingPagoAgua ? 'Registrando...' : 'Confirmar Pago de Agua'}</span>
@@ -2346,7 +2686,9 @@ export default function EgresosView() {
         onConfirm={handleConfirmAudit}
         tipo={confirmState.tipo}
         titulo={
-          confirmState.entity === 'egreso'
+          confirmState.entity === 'luz'
+            ? 'Editar Factura de Luz'
+            : confirmState.entity === 'egreso'
             ? confirmState.tipo === 'eliminacion'
               ? 'Eliminar Egreso'
               : 'Editar Egreso'
@@ -2358,7 +2700,7 @@ export default function EgresosView() {
         }
         descripcion="Se guardará el snapshot completo en bitacora_auditoria antes de aplicar la modificación."
         advertencia={confirmState.advertencia}
-        loading={saving || savingGuardia || savingSueldo}
+        loading={saving || savingGuardia || savingSueldo || savingCargaLuz}
       />
     </div>
   )

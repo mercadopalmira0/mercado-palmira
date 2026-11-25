@@ -43,31 +43,32 @@ export default function AuthModal({ isOpen, onClose }) {
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-sm animate-fadeIn">
-      <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-md overflow-hidden">
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-2 sm:p-4 bg-black/60 backdrop-blur-sm animate-fadeIn">
+      <div className="w-full max-w-md max-h-[88dvh] sm:max-h-[90dvh] flex flex-col overflow-hidden rounded-2xl bg-white shadow-2xl border border-slate-200">
         {/* Header */}
-        <div className="bg-slate-900 p-5 text-white flex items-center justify-between">
-          <div className="flex items-center space-x-2.5">
-            <div className="p-2 bg-emerald-500/20 text-emerald-400 rounded-lg">
+        <div className="shrink-0 bg-slate-900 px-5 py-4 text-white flex items-center justify-between">
+          <div className="flex items-center space-x-2.5 min-w-0">
+            <div className="p-2 bg-emerald-500/20 text-emerald-400 rounded-lg shrink-0">
               <ShieldCheck className="w-5 h-5" />
             </div>
-            <div>
-              <h3 className="font-bold text-base leading-tight">
+            <div className="min-w-0">
+              <h3 className="font-bold text-base leading-tight truncate">
                 {user ? 'Sesión de Usuario' : isRegistering ? 'Crear Administrador' : 'Acceso al Sistema'}
               </h3>
-              <p className="text-xs text-slate-400">Autenticación Supabase con RLS</p>
+              <p className="text-xs text-slate-400 truncate">Autenticación Supabase con RLS</p>
             </div>
           </div>
           <button
+            type="button"
             onClick={onClose}
-            className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+            className="p-1.5 rounded-lg text-slate-300 hover:text-white hover:bg-slate-800 transition-colors shrink-0"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
         {/* Content */}
-        <div className="p-6">
+        <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-5 pb-[calc(1.25rem+env(safe-area-inset-bottom))]">
           {user ? (
             <div className="space-y-4">
               <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 text-emerald-900">

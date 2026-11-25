@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
-import { MESES } from '../../lib/formatters'
-import { calcularDesgloseRubrosBase } from '../../lib/calculosCobro'
+import { MESES, formatResumenGrupo } from '../../lib/formatters'
+import { calcularDesgloseRubrosBase, calcularAutorellenoPersonalizado } from '../../lib/calculosCobro'
 import FotoUploaderModal from './FotoUploaderModal'
 import { Zap, Camera, CheckCircle2, AlertCircle, X, ExternalLink } from 'lucide-react'
 
@@ -20,6 +20,7 @@ export default function AbrirMesModal({
   const [facturaKwh, setFacturaKwh] = useState('')
   const [facturaUrl, setFacturaUrl] = useState('')
   const [unidades, setUnidades] = useState([])
+  const [hijosPorPadre, setHijosPorPadre] = useState({})
   const [unidadesModalidad, setUnidadesModalidad] = useState({})
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -78,9 +79,21 @@ export default function AbrirMesModal({
 
         if (error) throw error
 
-        setUnidades(data || [])
+        const todasUnidades = data || []
+        const hijosMap = {}
+        todasUnidades.forEach((u) => {
+          if (u.grupo_padre_id) {
+            if (!hijosMap[u.grupo_padre_id]) hijosMap[u.grupo_padre_id] = []
+            hijosMap[u.grupo_padre_id].push(u)
+          }
+        })
+        // REGLA CRÍTICA: Generar cobros únicamente para unidades con grupo_padre_id IS NULL
+        const unidadesPrincipales = todasUnidades.filter((u) => !u.grupo_padre_id)
+
+        setHijosPorPadre(hijosMap)
+        setUnidades(unidadesPrincipales)
         const mods = {}
-        data?.forEach((u) => {
+        unidadesPrincipales.forEach((u) => {
           mods[u.id] = u.tipo === 'variable' ? 'variable' : u.subtipo_fijo || 'puesto_abierto'
         })
         setUnidadesModalidad(mods)
@@ -160,27 +173,55 @@ export default function AbrirMesModal({
       for (const unidad of unidades) {
         if (!existingMap.has(unidad.id)) {
           const mod = unidadesModalidad[unidad.id] || (unidad.tipo === 'variable' ? 'variable' : 'puesto_abierto')
-          const puestos = unidad.cantidad_puestos || 1
+          const hijos = hijosPorPadre[unidad.id] || []
+          const puestos = Math.max(1, unidad.cantidad_puestos || (hijos.length > 0 ? 1 + hijos.length : 1))
 
           let montoBase = 0
+          let rubros = { montoGuardia: 0, montoAgua: 0, montoLuzGrupo: 0 }
+
           if (mod === 'variable') {
             montoBase = baseVariable * puestos
-          } else if (mod === 'puesto_cerrado') {
-            montoBase = tarifaCerrado
-          } else if (mod === 'puesto_abierto') {
-            montoBase = tarifaAbierto
-          } else if (mod === 'ambulante') {
-            montoBase = tarifaAmbulante
-          } else if (mod === 'no_socio') {
-            montoBase = tarifaNoSocio
+            rubros = calcularDesgloseRubrosBase({
+              cantidadPuestos: puestos,
+              montoBase,
+              montoLuzRedondeado: 0,
+              reglaCeroKwhAplicada: false,
+            })
+          } else if (mod === 'personalizado') {
+            montoBase = parseFloat(unidad.monto_fijo_personalizado) || 0
+            const hasCustom =
+              unidad.monto_guardia_personalizado != null ||
+              unidad.monto_agua_personalizado != null ||
+              unidad.monto_luz_personalizado != null
+            if (hasCustom) {
+              rubros = {
+                montoGuardia: parseFloat(unidad.monto_guardia_personalizado) || 0,
+                montoAgua: parseFloat(unidad.monto_agua_personalizado) || 0,
+                montoLuzGrupo: parseFloat(unidad.monto_luz_personalizado) || 0,
+              }
+              if (montoBase <= 0) {
+                montoBase = Math.round((rubros.montoGuardia + rubros.montoAgua + rubros.montoLuzGrupo) * 100) / 100
+              }
+            } else {
+              rubros = calcularAutorellenoPersonalizado(montoBase)
+            }
+          } else {
+            if (mod === 'puesto_cerrado') {
+              montoBase = tarifaCerrado * puestos
+            } else if (mod === 'puesto_abierto') {
+              montoBase = tarifaAbierto * puestos
+            } else if (mod === 'ambulante') {
+              montoBase = tarifaAmbulante * puestos
+            } else if (mod === 'no_socio') {
+              montoBase = tarifaNoSocio * puestos
+            }
+            rubros = calcularDesgloseRubrosBase({
+              cantidadPuestos: puestos,
+              montoBase,
+              montoLuzRedondeado: 0,
+              reglaCeroKwhAplicada: false,
+            })
           }
-
-          const rubros = calcularDesgloseRubrosBase({
-            cantidadPuestos: puestos,
-            montoBase,
-            montoLuzRedondeado: 0,
-            reglaCeroKwhAplicada: false,
-          })
 
           cobrosToInsert.push({
             unidad_id: unidad.id,
@@ -226,31 +267,33 @@ export default function AbrirMesModal({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-sm overflow-y-auto animate-fadeIn">
-      <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-2xl my-8 overflow-hidden">
-        <div className="bg-slate-900 px-6 py-4 text-white flex items-center justify-between">
-          <div className="flex items-center space-x-2.5">
-            <div className="p-2 bg-emerald-500/20 text-emerald-400 rounded-lg">
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-2 sm:p-4 bg-black/60 backdrop-blur-sm animate-fadeIn">
+      <div className="w-full max-w-2xl max-h-[88dvh] sm:max-h-[90dvh] flex flex-col overflow-hidden rounded-2xl bg-white shadow-2xl border border-slate-200">
+        <div className="shrink-0 bg-slate-900 px-5 py-3.5 text-white flex items-center justify-between">
+          <div className="flex items-center space-x-2.5 min-w-0">
+            <div className="p-2 bg-emerald-500/20 text-emerald-400 rounded-lg shrink-0">
               <Zap className="w-5 h-5" />
             </div>
-            <div>
-              <h3 className="font-bold text-base leading-tight">
+            <div className="min-w-0">
+              <h3 className="font-bold text-sm sm:text-base leading-tight truncate">
                 Apertura de Periodo: {MESES[mes]} {anio}
               </h3>
-              <p className="text-xs text-slate-400">
-                Desglose real de factura de luz (no descuenta de caja hasta que se registre su pago)
+              <p className="text-[11px] sm:text-xs text-slate-400 truncate">
+                Desglose real de factura de luz (no descuenta de caja hasta pagar)
               </p>
             </div>
           </div>
           <button
+            type="button"
             onClick={onClose}
-            className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+            className="p-1.5 rounded-lg text-slate-300 hover:text-white hover:bg-slate-800 transition-colors shrink-0"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
-        <form onSubmit={handleConfirm} className="p-6 space-y-5 max-h-[78vh] overflow-y-auto">
+        <form onSubmit={handleConfirm} className="flex flex-col flex-1 min-h-0 overflow-hidden">
+          <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-4 sm:p-6 space-y-5">
           {errorMsg && (
             <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-xs text-red-700 flex items-start gap-2">
               <AlertCircle className="w-4 h-4 text-red-600 flex-shrink-0 mt-0.5" />
@@ -421,15 +464,17 @@ export default function AbrirMesModal({
               <div className="max-h-52 overflow-y-auto divide-y divide-slate-100 border border-slate-200 rounded-xl bg-slate-50">
                 {unidades.map((unidad) => {
                   const currentMod = unidadesModalidad[unidad.id] || 'variable'
+                  const hijos = hijosPorPadre[unidad.id] || []
+                  const resumen = formatResumenGrupo(unidad, hijos)
                   return (
                     <div key={unidad.id} className="p-2.5 flex items-center justify-between text-xs gap-3">
                       <div className="min-w-0 flex-1">
                         <span className="font-bold text-slate-800 block truncate">
-                          {unidad.numero_identificador} • {unidad.socios?.nombre || 'Sin socio'}
+                          {resumen.puestosLabel} — {resumen.sociosLabel}
                         </span>
                         <span className="text-[10px] text-slate-500">
-                          {unidad.cantidad_puestos > 1
-                            ? `${unidad.cantidad_puestos} puestos agrupados`
+                          {resumen.esGrupo
+                            ? `${resumen.miembrosCount} puestos agrupados${unidad.nombre_grupo ? ` (${unidad.nombre_grupo})` : ''}`
                             : '1 puesto'}{' '}
                           {unidad.codigo_tarifador && `• Tarifador: ${unidad.codigo_tarifador}`}
                         </span>
@@ -445,6 +490,11 @@ export default function AbrirMesModal({
                         <option value="puesto_abierto">Fijo Abierto (70 Bs)</option>
                         <option value="ambulante">Ambulante (50 Bs)</option>
                         <option value="no_socio">No Socio (50 Bs)</option>
+                        {unidad.monto_fijo_personalizado != null && (
+                          <option value="personalizado">
+                            Personalizado ({parseFloat(unidad.monto_fijo_personalizado).toFixed(2)} Bs)
+                          </option>
+                        )}
                       </select>
                     </div>
                   )
@@ -452,8 +502,9 @@ export default function AbrirMesModal({
               </div>
             )}
           </div>
+          </div>
 
-          <div className="pt-2 flex items-center justify-end gap-2.5 border-t border-slate-100">
+          <div className="shrink-0 border-t border-slate-200 bg-white px-4 py-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] flex items-center justify-end gap-2">
             <button
               type="button"
               onClick={onClose}
@@ -464,10 +515,10 @@ export default function AbrirMesModal({
             <button
               type="submit"
               disabled={saving || loading}
-              className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-md shadow-emerald-900/20 transition-all flex items-center gap-1.5"
+              className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-md shadow-emerald-900/20 transition-all flex items-center gap-1.5"
             >
               <CheckCircle2 className="w-4 h-4" />
-              <span>{saving ? 'Guardando Periodo...' : 'Guardar Periodo y Generar Cobros'}</span>
+              <span>{saving ? 'Guardando...' : 'Guardar Periodo y Generar Cobros'}</span>
             </button>
           </div>
         </form>

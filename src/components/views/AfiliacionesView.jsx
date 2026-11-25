@@ -614,54 +614,56 @@ export default function AfiliacionesView() {
 
       {/* Modal Iniciar / Editar Plan */}
       {isNewPlanModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-sm overflow-y-auto animate-fadeIn">
-          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-md my-8 overflow-hidden">
-            <div className="bg-slate-900 px-6 py-4 text-white flex items-center justify-between">
-              <div className="flex items-center space-x-2.5">
-                <div className="p-2 bg-blue-500/20 text-blue-400 rounded-lg">
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-2 sm:p-4 bg-black/60 backdrop-blur-sm animate-fadeIn">
+          <div className="w-full max-w-md max-h-[88dvh] sm:max-h-[90dvh] flex flex-col overflow-hidden rounded-2xl bg-white shadow-2xl border border-slate-200">
+            <div className="shrink-0 bg-slate-900 px-5 py-3.5 text-white flex items-center justify-between">
+              <div className="flex items-center space-x-2.5 min-w-0">
+                <div className="p-2 bg-blue-500/20 text-blue-400 rounded-lg shrink-0">
                   <UserPlus className="w-5 h-5" />
                 </div>
-                <div>
-                  <h3 className="font-bold text-base leading-tight">
+                <div className="min-w-0">
+                  <h3 className="font-bold text-sm sm:text-base leading-tight truncate">
                     {editingPlan ? 'Editar Plan de Afiliación (Auditado)' : 'Nueva Afiliación de Socio'}
                   </h3>
-                  <p className="text-xs text-slate-400">Plan de pago para nuevo socio</p>
+                  <p className="text-[11px] sm:text-xs text-slate-400 truncate">Plan de pago para nuevo socio</p>
                 </div>
               </div>
-              <button onClick={() => setIsNewPlanModalOpen(false)}>
-                <X className="w-5 h-5 text-slate-400 hover:text-white" />
+              <button type="button" onClick={() => setIsNewPlanModalOpen(false)} className="p-1.5 text-slate-300 hover:text-white shrink-0">
+                <X className="w-5 h-5" />
               </button>
             </div>
 
-            <form onSubmit={handleCreatePlan} className="p-6 space-y-4">
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">Seleccionar Socio *</label>
-                <select required value={selectedSocioId} onChange={(e) => setSelectedSocioId(e.target.value)} className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-300 rounded-xl">
-                  <option value="">-- Elige un socio registrado --</option>
-                  {socios.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.nombre} {s.telefono ? `(${s.telefono})` : ''}
-                    </option>
-                  ))}
-                </select>
+            <form onSubmit={handleCreatePlan} className="flex flex-col flex-1 min-h-0 overflow-hidden">
+              <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-4 sm:p-6 space-y-4">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">Seleccionar Socio *</label>
+                  <select required value={selectedSocioId} onChange={(e) => setSelectedSocioId(e.target.value)} className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-300 rounded-xl">
+                    <option value="">-- Elige un socio registrado --</option>
+                    {socios.map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.nombre} {s.telefono ? `(${s.telefono})` : ''}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">Costo Total (Bs)</label>
+                    <input type="number" inputMode="decimal" step="0.01" min="0.01" required value={montoTotal} onChange={(e) => setMontoTotal(e.target.value)} className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-xl font-bold" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">Cuota Acordada (Bs/mes)</label>
+                    <input type="number" inputMode="decimal" step="0.01" min="0.01" required value={cuotaAcordada} onChange={(e) => setCuotaAcordada(e.target.value)} className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-xl font-bold" />
+                  </div>
+                </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">Costo Total (Bs)</label>
-                  <input type="number" inputMode="decimal" step="0.01" min="0.01" required value={montoTotal} onChange={(e) => setMontoTotal(e.target.value)} className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-xl font-bold" />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">Cuota Acordada (Bs/mes)</label>
-                  <input type="number" inputMode="decimal" step="0.01" min="0.01" required value={cuotaAcordada} onChange={(e) => setCuotaAcordada(e.target.value)} className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-xl font-bold" />
-                </div>
-              </div>
-
-              <div className="pt-2 flex items-center justify-end gap-2.5 border-t border-slate-100">
+              <div className="shrink-0 border-t border-slate-200 bg-white px-4 py-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] flex items-center justify-end gap-2">
                 <button type="button" onClick={() => setIsNewPlanModalOpen(false)} className="px-4 py-2 text-xs font-semibold text-slate-600">
                   Cancelar
                 </button>
-                <button type="submit" disabled={savingPlan} className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-md">
+                <button type="submit" disabled={savingPlan} className="px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-md">
                   {savingPlan ? 'Guardando...' : editingPlan ? 'Actualizar Plan' : 'Iniciar Plan'}
                 </button>
               </div>
@@ -672,69 +674,71 @@ export default function AfiliacionesView() {
 
       {/* Modal Registrar / Editar Abono */}
       {isAbonoModalOpen && selectedAfiliacion && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-sm overflow-y-auto animate-fadeIn">
-          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-md my-8 overflow-hidden">
-            <div className="bg-slate-900 px-6 py-4 text-white flex items-center justify-between">
-              <div className="flex items-center space-x-2.5">
-                <div className="p-2 bg-blue-500/20 text-blue-400 rounded-lg">
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-2 sm:p-4 bg-black/60 backdrop-blur-sm animate-fadeIn">
+          <div className="w-full max-w-md max-h-[88dvh] sm:max-h-[90dvh] flex flex-col overflow-hidden rounded-2xl bg-white shadow-2xl border border-slate-200">
+            <div className="shrink-0 bg-slate-900 px-5 py-3.5 text-white flex items-center justify-between">
+              <div className="flex items-center space-x-2.5 min-w-0">
+                <div className="p-2 bg-blue-500/20 text-blue-400 rounded-lg shrink-0">
                   <Coins className="w-5 h-5" />
                 </div>
-                <div>
-                  <h3 className="font-bold text-base leading-tight">
+                <div className="min-w-0">
+                  <h3 className="font-bold text-sm sm:text-base leading-tight truncate">
                     {editingAbono ? 'Editar Abono de Afiliación (Auditado)' : 'Abonar Cuota de Afiliación'}
                   </h3>
-                  <p className="text-xs text-slate-400">{selectedAfiliacion.socios?.nombre}</p>
+                  <p className="text-[11px] sm:text-xs text-slate-400 truncate">{selectedAfiliacion.socios?.nombre}</p>
                 </div>
               </div>
-              <button onClick={() => setIsAbonoModalOpen(false)}>
-                <X className="w-5 h-5 text-slate-400 hover:text-white" />
+              <button type="button" onClick={() => setIsAbonoModalOpen(false)} className="p-1.5 text-slate-300 hover:text-white shrink-0">
+                <X className="w-5 h-5" />
               </button>
             </div>
 
-            <form onSubmit={handleRegisterAbono} className="p-6 space-y-4">
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">Monto a Abonar (Bs) *</label>
-                <input type="number" inputMode="decimal" step="0.01" min="0.01" required value={abonoMonto} onChange={(e) => setAbonoMonto(e.target.value)} className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-xl font-bold" />
-              </div>
+            <form onSubmit={handleRegisterAbono} className="flex flex-col flex-1 min-h-0 overflow-hidden">
+              <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-4 sm:p-6 space-y-4">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">Monto a Abonar (Bs) *</label>
+                  <input type="number" inputMode="decimal" step="0.01" min="0.01" required value={abonoMonto} onChange={(e) => setAbonoMonto(e.target.value)} className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-xl font-bold" />
+                </div>
 
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1.5">Método de Pago</label>
-                <div className="grid grid-cols-2 gap-3">
-                  <button type="button" onClick={() => setAbonoMetodo('efectivo')} className={`py-2 px-3 rounded-xl border text-xs font-bold flex items-center justify-center gap-2 ${abonoMetodo === 'efectivo' ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-slate-50 text-slate-700 border-slate-300'}`}>
-                    <Coins className="w-4 h-4" />
-                    <span>Efectivo</span>
-                  </button>
-                  <button type="button" onClick={() => setAbonoMetodo('qr')} className={`py-2 px-3 rounded-xl border text-xs font-bold flex items-center justify-center gap-2 ${abonoMetodo === 'qr' ? 'bg-blue-600 text-white border-blue-600' : 'bg-slate-50 text-slate-700 border-slate-300'}`}>
-                    <QrCode className="w-4 h-4" />
-                    <span>QR / Banco</span>
-                  </button>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1.5">Método de Pago</label>
+                  <div className="grid grid-cols-2 gap-3">
+                    <button type="button" onClick={() => setAbonoMetodo('efectivo')} className={`py-2 px-3 rounded-xl border text-xs font-bold flex items-center justify-center gap-2 ${abonoMetodo === 'efectivo' ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-slate-50 text-slate-700 border-slate-300'}`}>
+                      <Coins className="w-4 h-4" />
+                      <span>Efectivo</span>
+                    </button>
+                    <button type="button" onClick={() => setAbonoMetodo('qr')} className={`py-2 px-3 rounded-xl border text-xs font-bold flex items-center justify-center gap-2 ${abonoMetodo === 'qr' ? 'bg-blue-600 text-white border-blue-600' : 'bg-slate-50 text-slate-700 border-slate-300'}`}>
+                      <QrCode className="w-4 h-4" />
+                      <span>QR / Banco</span>
+                    </button>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">N° Recibo Talonario Físico (Opcional)</label>
+                  <input type="text" value={abonoTalonario} onChange={(e) => setAbonoTalonario(e.target.value)} className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-300 rounded-xl" />
+                </div>
+
+                <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-xs">
+                  <span className="text-slate-600">Comprobante Drive:</span>
+                  <div className="flex items-center space-x-2">
+                    {abonoComprobanteUrl && (
+                      <a href={abonoComprobanteUrl} target="_blank" rel="noreferrer" className="p-1.5 text-blue-600 bg-blue-50 rounded-lg">
+                        <ExternalLink className="w-3.5 h-3.5" />
+                      </a>
+                    )}
+                    <button type="button" onClick={() => setIsPhotoModalOpen(true)} className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 rounded-xl text-xs font-semibold text-slate-700">
+                      {abonoComprobanteUrl ? 'Cambiar Foto' : 'Adjuntar Foto'}
+                    </button>
+                  </div>
                 </div>
               </div>
 
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">N° Recibo Talonario Físico (Opcional)</label>
-                <input type="text" value={abonoTalonario} onChange={(e) => setAbonoTalonario(e.target.value)} className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-300 rounded-xl" />
-              </div>
-
-              <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-xs">
-                <span className="text-slate-600">Comprobante Drive:</span>
-                <div className="flex items-center space-x-2">
-                  {abonoComprobanteUrl && (
-                    <a href={abonoComprobanteUrl} target="_blank" rel="noreferrer" className="p-1.5 text-blue-600 bg-blue-50 rounded-lg">
-                      <ExternalLink className="w-3.5 h-3.5" />
-                    </a>
-                  )}
-                  <button type="button" onClick={() => setIsPhotoModalOpen(true)} className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 rounded-xl text-xs font-semibold text-slate-700">
-                    {abonoComprobanteUrl ? 'Cambiar Foto' : 'Adjuntar Foto'}
-                  </button>
-                </div>
-              </div>
-
-              <div className="pt-2 flex items-center justify-end gap-2.5 border-t border-slate-100">
+              <div className="shrink-0 border-t border-slate-200 bg-white px-4 py-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] flex items-center justify-end gap-2">
                 <button type="button" onClick={() => setIsAbonoModalOpen(false)} className="px-4 py-2 text-xs font-semibold text-slate-600">
                   Cancelar
                 </button>
-                <button type="submit" disabled={savingAbono} className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-md">
+                <button type="submit" disabled={savingAbono} className="px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-md">
                   {savingAbono ? 'Guardando...' : editingAbono ? 'Actualizar Abono' : 'Confirmar Abono'}
                 </button>
               </div>
@@ -757,28 +761,28 @@ export default function AfiliacionesView() {
 
       {/* Modal Historial de Abonos */}
       {isHistorialModalOpen && selectedAfiliacion && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-sm overflow-y-auto animate-fadeIn">
-          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-lg my-8 overflow-hidden">
-            <div className="bg-slate-900 px-6 py-4 text-white flex items-center justify-between">
-              <div className="flex items-center space-x-2.5">
-                <div className="p-2 bg-blue-500/20 text-blue-400 rounded-lg">
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-2 sm:p-4 bg-black/60 backdrop-blur-sm animate-fadeIn">
+          <div className="w-full max-w-lg max-h-[88dvh] sm:max-h-[90dvh] flex flex-col overflow-hidden rounded-2xl bg-white shadow-2xl border border-slate-200">
+            <div className="shrink-0 bg-slate-900 px-5 py-3.5 text-white flex items-center justify-between">
+              <div className="flex items-center space-x-2.5 min-w-0">
+                <div className="p-2 bg-blue-500/20 text-blue-400 rounded-lg shrink-0">
                   <Receipt className="w-5 h-5" />
                 </div>
-                <div>
-                  <h3 className="font-bold text-base leading-tight">Historial de Abonos de Afiliación</h3>
-                  <p className="text-xs text-slate-400">{selectedAfiliacion.socios?.nombre}</p>
+                <div className="min-w-0">
+                  <h3 className="font-bold text-sm sm:text-base leading-tight truncate">Historial de Abonos de Afiliación</h3>
+                  <p className="text-[11px] sm:text-xs text-slate-400 truncate">{selectedAfiliacion.socios?.nombre}</p>
                 </div>
               </div>
-              <button onClick={() => setIsHistorialModalOpen(false)}>
-                <X className="w-5 h-5 text-slate-400 hover:text-white" />
+              <button type="button" onClick={() => setIsHistorialModalOpen(false)} className="p-1.5 text-slate-300 hover:text-white shrink-0">
+                <X className="w-5 h-5" />
               </button>
             </div>
 
-            <div className="p-6 space-y-3">
+            <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-4 sm:p-6 space-y-3">
               {pagosAfiliacion.length === 0 ? (
                 <p className="text-xs text-slate-400 py-6 text-center">No hay abonos registrados para este socio.</p>
               ) : (
-                <div className="divide-y divide-slate-100 max-h-72 overflow-y-auto">
+                <div className="divide-y divide-slate-100">
                   {pagosAfiliacion.map((pago) => {
                     const isAnulado = pago.estado === 'anulado'
                     const isAnulando = anulandoPagoId === pago.id
@@ -876,11 +880,12 @@ export default function AfiliacionesView() {
                 </div>
               )}
 
-              <div className="pt-2 border-t border-slate-100 flex justify-end">
-                <button type="button" onClick={() => setIsHistorialModalOpen(false)} className="px-4 py-2 text-xs font-semibold bg-slate-100 hover:bg-slate-200 rounded-xl">
-                  Cerrar
-                </button>
-              </div>
+            </div>
+
+            <div className="shrink-0 border-t border-slate-200 bg-white px-4 py-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] flex justify-end">
+              <button type="button" onClick={() => setIsHistorialModalOpen(false)} className="px-4 py-2 text-xs font-semibold bg-slate-100 hover:bg-slate-200 rounded-xl">
+                Cerrar
+              </button>
             </div>
           </div>
         </div>

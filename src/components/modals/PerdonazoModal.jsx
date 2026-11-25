@@ -227,24 +227,24 @@ export default function PerdonazoModal({ isOpen, onClose, onUpdated }) {
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-sm overflow-y-auto">
-      <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-2xl my-8 overflow-hidden">
-        <div className="bg-slate-900 px-6 py-4 text-white flex items-center justify-between">
-          <div className="flex items-center space-x-2.5">
-            <div className="p-2 bg-purple-500/20 text-purple-300 rounded-lg">
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-2 sm:p-4 bg-black/60 backdrop-blur-sm animate-fadeIn">
+      <div className="w-full max-w-2xl max-h-[88dvh] sm:max-h-[90dvh] flex flex-col overflow-hidden rounded-2xl bg-white shadow-2xl border border-slate-200">
+        <div className="shrink-0 bg-slate-900 px-5 py-3.5 text-white flex items-center justify-between">
+          <div className="flex items-center space-x-2.5 min-w-0">
+            <div className="p-2 bg-purple-500/20 text-purple-300 rounded-lg shrink-0">
               <Sparkles className="w-5 h-5" />
             </div>
-            <div>
-              <h3 className="font-bold text-base leading-tight">Configurar Perdonazo de Multas</h3>
-              <p className="text-xs text-slate-400">Edición y eliminación auditadas en bitácora</p>
+            <div className="min-w-0">
+              <h3 className="font-bold text-sm sm:text-base leading-tight truncate">Configurar Perdonazo de Multas</h3>
+              <p className="text-[11px] sm:text-xs text-slate-400 truncate">Edición y eliminación auditadas en bitácora</p>
             </div>
           </div>
-          <button onClick={onClose} className="p-1 text-slate-400 hover:text-white">
+          <button type="button" onClick={onClose} className="p-1.5 text-slate-300 hover:text-white shrink-0">
             <X className="w-5 h-5" />
           </button>
         </div>
 
-        <div className="p-6 space-y-5 max-h-[78vh] overflow-y-auto">
+        <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-4 sm:p-6 space-y-5">
           {errorMsg && (
             <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-xs text-red-700 flex items-start gap-2">
               <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />

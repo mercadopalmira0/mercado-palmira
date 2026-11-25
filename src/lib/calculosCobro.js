@@ -87,6 +87,33 @@ export function calcularMultaMora({
 }
 
 /**
+ * Autorrellena inteligentemente el desglose interno (Guardia, Agua, Grupo Luz)
+ * a partir de un monto total personalizado:
+ * - Si total >= 45: 40 Guardia + 5 Agua + resto a Grupo Luz.
+ * - Si total < 45: se reparte proporcionalmente (40:5) con 2 decimales exactos.
+ */
+export function calcularAutorellenoPersonalizado(total = 0) {
+  const totalNum = Math.round((parseFloat(total) || 0) * 100) / 100
+  if (totalNum <= 0) {
+    return { montoGuardia: 0, montoAgua: 0, montoLuzGrupo: 0 }
+  }
+  if (totalNum >= 45) {
+    return {
+      montoGuardia: 40,
+      montoAgua: 5,
+      montoLuzGrupo: Math.round((totalNum - 45) * 100) / 100,
+    }
+  }
+  const guardia = Math.round(totalNum * (40 / 45) * 100) / 100
+  const agua = Math.round((totalNum - guardia) * 100) / 100
+  return {
+    montoGuardia: guardia,
+    montoAgua: agua,
+    montoLuzGrupo: 0,
+  }
+}
+
+/**
  * Calcula el desglose interno automático por rubros (Guardia, Agua y Grupo Luz):
  * - Base por puesto: 40 Bs Guardia + 5 Bs Agua.
  * - Resto de la cuota fija (ej. 25 Bs en tarifa 70, 10 Bs en tarifa 55, 13 Bs en variable) + consumo de luz -> Grupo Luz.
@@ -105,7 +132,7 @@ export function calcularDesgloseRubrosBase({
   const montoGuardia = 40 * puestosEfectivos
   const montoAgua = 5 * puestosEfectivos
   const restoFijo = Math.max(0, baseNum - montoGuardia - montoAgua)
-  const montoLuzGrupo = restoFijo + luzNum
+  const montoLuzGrupo = Math.round((restoFijo + luzNum) * 100) / 100
 
   return {
     montoGuardia,
@@ -116,7 +143,8 @@ export function calcularDesgloseRubrosBase({
 
 /**
  * Calcula el desglose completo del cobro para una unidad de cobro en un mes dado.
- * Respeta ediciones manuales por emergencia/reposición (esMontoEditado = true).
+ * Respeta ediciones manuales por emergencia/reposición (esMontoEditado = true)
+ * y tarifas fijas personalizadas (modalidadAplicada = 'personalizado').
  */
 export function calcularDesgloseCobro({
   modalidadAplicada,
@@ -137,6 +165,10 @@ export function calcularDesgloseCobro({
   montoGuardiaEditado = null,
   montoAguaEditado = null,
   montoLuzGrupoEditado = null,
+  montoFijoPersonalizado = null,
+  montoGuardiaPersonalizado = null,
+  montoAguaPersonalizado = null,
+  montoLuzPersonalizado = null,
 }) {
   const baseVariable = parseFloat(tarifas.base_variable_puesto) || 58
   const tarifaCerrado = parseFloat(tarifas.tarifa_fija_cerrado) || 55
@@ -144,6 +176,7 @@ export function calcularDesgloseCobro({
   const tarifaAmbulante = parseFloat(tarifas.tarifa_fija_ambulante) || 50
   const tarifaNoSocio = parseFloat(tarifas.tarifa_fija_no_socio) || 50
   const tipoRedondeo = tarifas.tipo_redondeo_luz || 'arriba_0_50'
+  const puestos = Math.max(1, parseInt(cantidadPuestos, 10) || 1)
 
   let montoBase = 0
   let consumoKwh = 0
@@ -158,20 +191,22 @@ export function calcularDesgloseCobro({
       montoLuzRedondeado = 0
       reglaCeroKwhAplicada = true
     } else {
-      montoBase = baseVariable * (parseInt(cantidadPuestos, 10) || 1)
+      montoBase = baseVariable * puestos
       const luzCruda = consumoKwh * (parseFloat(precioKwh) || 0)
       montoLuzRedondeado = roundLuz(luzCruda, tipoRedondeo)
     }
+  } else if (modalidadAplicada === 'personalizado') {
+    montoBase = parseFloat(montoFijoPersonalizado) || 0
   } else if (modalidadAplicada === 'puesto_cerrado') {
-    montoBase = tarifaCerrado
+    montoBase = tarifaCerrado * puestos
   } else if (modalidadAplicada === 'puesto_abierto') {
-    montoBase = tarifaAbierto
+    montoBase = tarifaAbierto * puestos
   } else if (modalidadAplicada === 'ambulante') {
-    montoBase = tarifaAmbulante
+    montoBase = tarifaAmbulante * puestos
   } else if (modalidadAplicada === 'no_socio') {
-    montoBase = tarifaNoSocio
+    montoBase = tarifaNoSocio * puestos
   } else {
-    montoBase = baseVariable
+    montoBase = baseVariable * puestos
   }
 
   let montoGuardia = 0
@@ -182,9 +217,27 @@ export function calcularDesgloseCobro({
     montoGuardia = parseFloat(montoGuardiaEditado) || 0
     montoAgua = parseFloat(montoAguaEditado) || 0
     montoLuzGrupo = parseFloat(montoLuzGrupoEditado) || 0
+  } else if (modalidadAplicada === 'personalizado') {
+    const hasCustomBreakdown =
+      montoGuardiaPersonalizado != null ||
+      montoAguaPersonalizado != null ||
+      montoLuzPersonalizado != null
+    if (hasCustomBreakdown) {
+      montoGuardia = parseFloat(montoGuardiaPersonalizado) || 0
+      montoAgua = parseFloat(montoAguaPersonalizado) || 0
+      montoLuzGrupo = parseFloat(montoLuzPersonalizado) || 0
+      if (montoBase <= 0) {
+        montoBase = Math.round((montoGuardia + montoAgua + montoLuzGrupo) * 100) / 100
+      }
+    } else {
+      const autoPers = calcularAutorellenoPersonalizado(montoBase)
+      montoGuardia = autoPers.montoGuardia
+      montoAgua = autoPers.montoAgua
+      montoLuzGrupo = autoPers.montoLuzGrupo
+    }
   } else {
     const rubros = calcularDesgloseRubrosBase({
-      cantidadPuestos,
+      cantidadPuestos: puestos,
       montoBase,
       montoLuzRedondeado,
       reglaCeroKwhAplicada,
@@ -195,8 +248,8 @@ export function calcularDesgloseCobro({
   }
 
   const subtotalRubros = esMontoEditado
-    ? montoGuardia + montoAgua + montoLuzGrupo
-    : montoBase + montoLuzRedondeado
+    ? Math.round((montoGuardia + montoAgua + montoLuzGrupo) * 100) / 100
+    : Math.round((montoBase + montoLuzRedondeado) * 100) / 100
 
   const { diasRetraso, multaCalculada, motivoExencion } = calcularMultaMora({
     mes,

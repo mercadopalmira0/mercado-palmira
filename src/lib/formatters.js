@@ -43,3 +43,55 @@ export function getPerdonazoVigente(campanias = [], fechaStr = getLocalDateStr()
     (a, b) => (parseFloat(b.porcentaje_descuento) || 0) - (parseFloat(a.porcentaje_descuento) || 0)
   )[0]
 }
+
+/**
+ * Formatea los puestos y nombres de un grupo de cobro para tarjetas, cobros y recibos.
+ */
+export function formatResumenGrupo(unidadLider, miembros = [], nombreLiderOverride = null) {
+  if (!unidadLider) {
+    return {
+      puestosLabel: '',
+      sociosLabel: nombreLiderOverride || 'Sin socio',
+      esGrupo: false,
+      miembrosCount: 1,
+    }
+  }
+
+  const liderNombre = nombreLiderOverride || unidadLider.socios?.nombre || 'Sin socio'
+  const hijos = Array.isArray(miembros) ? miembros : []
+
+  if (hijos.length === 0) {
+    return {
+      puestosLabel: unidadLider.numero_identificador || '',
+      sociosLabel: unidadLider.nombres_titulares
+        ? `${liderNombre} (${unidadLider.nombres_titulares})`
+        : liderNombre,
+      esGrupo: (unidadLider.cantidad_puestos || 1) > 1,
+      miembrosCount: unidadLider.cantidad_puestos || 1,
+    }
+  }
+
+  const puestosRaw = [unidadLider.numero_identificador, ...hijos.map((h) => h.numero_identificador)]
+    .map((p) => (p ? String(p).trim() : ''))
+    .filter(Boolean)
+  const puestosNums = puestosRaw.map((p) => p.replace(/^puesto\s+/i, '').trim())
+  const puestosLabel = `Puestos ${puestosNums.join(', ')}`
+
+  const otrosSocios = []
+  hijos.forEach((h) => {
+    const n = h.socios?.nombre
+    if (n && n !== liderNombre && !otrosSocios.includes(n)) {
+      otrosSocios.push(n)
+    }
+  })
+
+  const sociosLabel =
+    otrosSocios.length > 0 ? `${liderNombre} (+ ${otrosSocios.join(', ')})` : liderNombre
+
+  return {
+    puestosLabel,
+    sociosLabel,
+    esGrupo: true,
+    miembrosCount: 1 + hijos.length,
+  }
+}

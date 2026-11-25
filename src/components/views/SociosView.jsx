@@ -2,7 +2,10 @@ import React, { useState, useEffect, useRef } from 'react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
 import { registrarAuditoria, registrarEdicionAuditoria, registrarEliminacionAuditoria } from '../../lib/auditoria'
+import { calcularAutorellenoPersonalizado } from '../../lib/calculosCobro'
+import { formatResumenGrupo } from '../../lib/formatters'
 import TraspasoPuestoModal from '../modals/TraspasoPuestoModal'
+import GrupoCobroModal from '../modals/GrupoCobroModal'
 import ConfirmMotivoModal from '../modals/ConfirmMotivoModal'
 import {
   Users,
@@ -22,12 +25,14 @@ import {
   PlusCircle,
   ArrowRightLeft,
   History,
-  ExternalLink
+  ExternalLink,
+  MoreVertical,
+  Unlink
 } from 'lucide-react'
 
 export default function SociosView() {
   const { user, isAdmin } = useAuth()
-  const [activeTab, setActiveTab] = useState('socios') // 'socios' | 'externos' | 'traspasos'
+  const [activeTab, setActiveTab] = useState('socios') // 'socios' | 'grupos' | 'externos' | 'traspasos'
   const [socios, setSocios] = useState([])
   const [externos, setExternos] = useState([])
   const [traspasos, setTraspasos] = useState([])
@@ -36,6 +41,7 @@ export default function SociosView() {
   const [searchTerm, setSearchTerm] = useState('')
   const [filterTipo, setFilterTipo] = useState('todos')
   const [statusMessage, setStatusMessage] = useState(null)
+  const [openMenuSocioId, setOpenMenuSocioId] = useState(null)
 
   // Modal Socio
   const [isModalOpen, setIsModalOpen] = useState(false)
@@ -53,12 +59,21 @@ export default function SociosView() {
 
   const [hasUnidad, setHasUnidad] = useState(true)
   const [numeroIdentificador, setNumeroIdentificador] = useState('')
-  const [nombresTitulares, setNombresTitulares] = useState('')
-  const [tipo, setTipo] = useState('variable')
+  const [tipo, setTipo] = useState('fijo')
   const [subtipoFijo, setSubtipoFijo] = useState('puesto_abierto')
-  const [cantidadPuestos, setCantidadPuestos] = useState(1)
   const [codigoTarifador, setCodigoTarifador] = useState('')
   const [ultimaLectura, setUltimaLectura] = useState(0)
+
+  // Tarifa fija personalizada
+  const [montoFijoPers, setMontoFijoPers] = useState('')
+  const [guardiaPers, setGuardiaPers] = useState('')
+  const [aguaPers, setAguaPers] = useState('')
+  const [luzPers, setLuzPers] = useState('')
+  const [detallePers, setDetallePers] = useState('')
+
+  // Modal Grupo de Cobro
+  const [isGrupoModalOpen, setIsGrupoModalOpen] = useState(false)
+  const [editingGrupo, setEditingGrupo] = useState(null)
 
   // Modal Externo (No Socio)
   const [isExtModalOpen, setIsExtModalOpen] = useState(false)
@@ -130,12 +145,15 @@ export default function SociosView() {
     setNotas('')
     setHasUnidad(true)
     setNumeroIdentificador('')
-    setNombresTitulares('')
-    setTipo('variable')
+    setTipo('fijo')
     setSubtipoFijo('puesto_abierto')
-    setCantidadPuestos(1)
     setCodigoTarifador('')
     setUltimaLectura(0)
+    setMontoFijoPers('')
+    setGuardiaPers('')
+    setAguaPers('')
+    setLuzPers('')
+    setDetallePers('')
     setIsEditing(false)
     setEditingSocioOriginal(null)
     setEditingSocioId(null)
@@ -164,18 +182,51 @@ export default function SociosView() {
       setHasUnidad(true)
       setEditingUnidadId(unidad.id)
       setNumeroIdentificador(unidad.numero_identificador || '')
-      setNombresTitulares(unidad.nombres_titulares || '')
-      setTipo(unidad.tipo || 'variable')
+      setTipo(unidad.tipo || 'fijo')
       setSubtipoFijo(unidad.subtipo_fijo || 'puesto_abierto')
-      setCantidadPuestos(unidad.cantidad_puestos || 1)
       setCodigoTarifador(unidad.codigo_tarifador || '')
       setUltimaLectura(unidad.ultima_lectura || 0)
+      setMontoFijoPers(unidad.monto_fijo_personalizado != null ? String(unidad.monto_fijo_personalizado) : '')
+      setGuardiaPers(unidad.monto_guardia_personalizado != null ? String(unidad.monto_guardia_personalizado) : '')
+      setAguaPers(unidad.monto_agua_personalizado != null ? String(unidad.monto_agua_personalizado) : '')
+      setLuzPers(unidad.monto_luz_personalizado != null ? String(unidad.monto_luz_personalizado) : '')
+      setDetallePers(unidad.detalle_tarifa_personalizada || '')
     } else {
       setHasUnidad(false)
     }
 
     setIsModalOpen(true)
     setTimeout(() => nombreInputRef.current?.focus(), 100)
+  }
+
+  const handleMontoTotalPersChange = (val) => {
+    setMontoFijoPers(val)
+    const auto = calcularAutorellenoPersonalizado(val)
+    setGuardiaPers(val === '' ? '' : String(auto.montoGuardia))
+    setAguaPers(val === '' ? '' : String(auto.montoAgua))
+    setLuzPers(val === '' ? '' : String(auto.montoLuzGrupo))
+  }
+
+  const handleDesglosePersChange = (field, val) => {
+    const nextG = field === 'g' ? val : guardiaPers
+    const nextA = field === 'a' ? val : aguaPers
+    const nextL = field === 'l' ? val : luzPers
+    if (field === 'g') setGuardiaPers(val)
+    if (field === 'a') setAguaPers(val)
+    if (field === 'l') setLuzPers(val)
+    const sum = Math.round(((parseFloat(nextG) || 0) + (parseFloat(nextA) || 0) + (parseFloat(nextL) || 0)) * 100) / 100
+    setMontoFijoPers(String(sum))
+  }
+
+  const buildCustomTariffFields = () => {
+    const isPers = tipo === 'fijo' && subtipoFijo === 'personalizado'
+    return {
+      monto_fijo_personalizado: isPers ? Math.round((parseFloat(montoFijoPers) || 0) * 100) / 100 : null,
+      monto_guardia_personalizado: isPers ? Math.round((parseFloat(guardiaPers) || 0) * 100) / 100 : null,
+      monto_agua_personalizado: isPers ? Math.round((parseFloat(aguaPers) || 0) * 100) / 100 : null,
+      monto_luz_personalizado: isPers ? Math.round((parseFloat(luzPers) || 0) * 100) / 100 : null,
+      detalle_tarifa_personalizada: isPers ? detallePers.trim() || null : null,
+    }
   }
 
   const handleSave = async (continueAdding = false) => {
@@ -185,6 +236,10 @@ export default function SociosView() {
     }
     if (hasUnidad && !numeroIdentificador.trim()) {
       setStatusMessage({ type: 'error', text: 'Ingresa un número o nombre identificador para el puesto/unidad.' })
+      return
+    }
+    if (hasUnidad && tipo === 'fijo' && subtipoFijo === 'personalizado' && (parseFloat(montoFijoPers) || 0) <= 0) {
+      setStatusMessage({ type: 'error', text: 'Ingresa el monto total mensual personalizado mayor a 0.' })
       return
     }
 
@@ -220,17 +275,18 @@ export default function SociosView() {
       if (socioError) throw socioError
 
       if (hasUnidad && newSocio) {
+        const customFields = buildCustomTariffFields()
         const { error: unidadError } = await supabase.from('unidades_cobro').insert([
           {
             socio_responsable_id: newSocio.id,
             numero_identificador: numeroIdentificador.trim(),
-            nombres_titulares: nombresTitulares.trim() || null,
             tipo,
             subtipo_fijo: tipo === 'fijo' ? subtipoFijo : null,
-            cantidad_puestos: parseInt(cantidadPuestos, 10) || 1,
+            cantidad_puestos: 1,
             codigo_tarifador: tipo === 'variable' ? codigoTarifador.trim() || null : null,
             ultima_lectura: parseFloat(ultimaLectura) || 0,
             activo,
+            ...customFields,
           },
         ])
         if (unidadError) throw unidadError
@@ -249,10 +305,15 @@ export default function SociosView() {
         setFechaPagoEspecial('')
         setNotas('')
         setNumeroIdentificador('')
-        setNombresTitulares('')
+        setTipo('fijo')
+        setSubtipoFijo('puesto_abierto')
         setCodigoTarifador('')
-        setCantidadPuestos(1)
         setUltimaLectura(0)
+        setMontoFijoPers('')
+        setGuardiaPers('')
+        setAguaPers('')
+        setLuzPers('')
+        setDetallePers('')
         setTimeout(() => nombreInputRef.current?.focus(), 150)
       } else {
         setIsModalOpen(false)
@@ -429,16 +490,17 @@ export default function SociosView() {
           notas: notas.trim() || null,
         }
         const unidadOrig = target.unidades_cobro?.[0] || null
+        const customFields = buildCustomTariffFields()
         const nuevaUnidad = hasUnidad
           ? {
               numero_identificador: numeroIdentificador.trim(),
-              nombres_titulares: nombresTitulares.trim() || null,
               tipo,
               subtipo_fijo: tipo === 'fijo' ? subtipoFijo : null,
-              cantidad_puestos: parseInt(cantidadPuestos, 10) || 1,
+              cantidad_puestos: unidadOrig?.cantidad_puestos || 1,
               codigo_tarifador: tipo === 'variable' ? codigoTarifador.trim() || null : null,
               ultima_lectura: parseFloat(ultimaLectura) || 0,
               activo,
+              ...customFields,
             }
           : null
 
@@ -462,6 +524,7 @@ export default function SociosView() {
                   subtipo_fijo: unidadOrig.subtipo_fijo,
                   cantidad_puestos: unidadOrig.cantidad_puestos,
                   codigo_tarifador: unidadOrig.codigo_tarifador,
+                  monto_fijo_personalizado: unidadOrig.monto_fijo_personalizado,
                 }
               : null,
           },
@@ -474,6 +537,7 @@ export default function SociosView() {
                   subtipo_fijo: nuevaUnidad.subtipo_fijo,
                   cantidad_puestos: nuevaUnidad.cantidad_puestos,
                   codigo_tarifador: nuevaUnidad.codigo_tarifador,
+                  monto_fijo_personalizado: nuevaUnidad.monto_fijo_personalizado,
                 }
               : null,
           },
@@ -572,6 +636,46 @@ export default function SociosView() {
         if (error) throw error
 
         setStatusMessage({ type: 'success', text: `Aportante externo "${target.nombre_completo}" eliminado y auditado.` })
+      } else if (entity === 'desagrupar' && tipoOp === 'edicion') {
+        const { lider, miembros } = target
+        const idsMiembros = (miembros || []).map((m) => m.id)
+
+        await registrarEdicionAuditoria({
+          usuarioId: user?.id,
+          modulo: 'Grupos de Cobro',
+          tabla: 'unidades_cobro',
+          registroId: lider.id,
+          motivo,
+          resumen: `Desagrupación de grupo "${lider.nombre_grupo || lider.numero_identificador}"`,
+          datosAnteriores: {
+            lider_id: lider.id,
+            miembros_ids: idsMiembros,
+            cantidad_puestos: lider.cantidad_puestos,
+            nombre_grupo: lider.nombre_grupo,
+          },
+          datosNuevos: {
+            lider_id: lider.id,
+            miembros_ids: [],
+            cantidad_puestos: 1,
+            nombre_grupo: null,
+          },
+        })
+
+        if (idsMiembros.length > 0) {
+          const { error: mErr } = await supabase
+            .from('unidades_cobro')
+            .update({ grupo_padre_id: null, cantidad_puestos: 1, nombre_grupo: null, nombres_titulares: null })
+            .in('id', idsMiembros)
+          if (mErr) throw mErr
+        }
+
+        const { error: lErr } = await supabase
+          .from('unidades_cobro')
+          .update({ cantidad_puestos: 1, nombre_grupo: null, nombres_titulares: null })
+          .eq('id', lider.id)
+        if (lErr) throw lErr
+
+        setStatusMessage({ type: 'success', text: 'Grupo desagrupado correctamente y registrado en bitácora.' })
       }
 
       setConfirmState({ open: false, tipo: 'edicion', entity: null, target: null, advertencia: '' })
@@ -586,6 +690,30 @@ export default function SociosView() {
     }
   }
 
+  const allUnidadesMap = {}
+  const hijosPorPadre = {}
+  socios.forEach((s) => {
+    ;(s.unidades_cobro || []).forEach((u) => {
+      const enriched = { ...u, socios: { id: s.id, nombre: s.nombre, telefono: s.telefono } }
+      allUnidadesMap[u.id] = enriched
+      if (u.grupo_padre_id) {
+        if (!hijosPorPadre[u.grupo_padre_id]) hijosPorPadre[u.grupo_padre_id] = []
+        hijosPorPadre[u.grupo_padre_id].push(enriched)
+      }
+    })
+  })
+
+  const gruposCobro = Object.values(allUnidadesMap)
+    .filter((u) => !u.grupo_padre_id && ((hijosPorPadre[u.id]?.length || 0) > 0 || (u.cantidad_puestos || 1) > 1))
+    .map((lider) => {
+      const miembros = hijosPorPadre[lider.id] || []
+      return {
+        lider,
+        miembros,
+        resumen: formatResumenGrupo(lider, miembros),
+      }
+    })
+
   const filteredSocios = socios.filter((s) => {
     const term = searchTerm.toLowerCase()
     const matchesName = s.nombre?.toLowerCase().includes(term)
@@ -594,7 +722,8 @@ export default function SociosView() {
       (u) =>
         u.numero_identificador?.toLowerCase().includes(term) ||
         u.codigo_tarifador?.toLowerCase().includes(term) ||
-        u.nombres_titulares?.toLowerCase().includes(term)
+        u.nombres_titulares?.toLowerCase().includes(term) ||
+        u.nombre_grupo?.toLowerCase().includes(term)
     )
 
     const matchesSearch = !term || matchesName || matchesPhone || matchesUnidad
@@ -642,7 +771,21 @@ export default function SociosView() {
             <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin text-emerald-600' : ''}`} />
           </button>
 
-          {activeTab === 'externos' ? (
+          {activeTab === 'grupos' ? (
+            isAdmin && (
+              <button
+                type="button"
+                onClick={() => {
+                  setEditingGrupo(null)
+                  setIsGrupoModalOpen(true)
+                }}
+                className="flex-1 sm:flex-none flex items-center justify-center space-x-2 px-4 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-700 text-white font-semibold text-sm shadow-md transition-all"
+              >
+                <Layers className="w-4 h-4" />
+                <span>+ Crear Grupo</span>
+              </button>
+            )
+          ) : activeTab === 'externos' ? (
             isAdmin && (
               <button
                 type="button"
@@ -678,7 +821,17 @@ export default function SociosView() {
           }`}
         >
           <Users className="w-3.5 h-3.5" />
-          <span>Socios del Mercado ({socios.length})</span>
+          <span>Socios ({socios.length})</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveTab('grupos')}
+          className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${
+            activeTab === 'grupos' ? 'bg-purple-600 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-100'
+          }`}
+        >
+          <Layers className="w-3.5 h-3.5" />
+          <span>Grupos de Cobro ({gruposCobro.length})</span>
         </button>
         <button
           type="button"
@@ -687,7 +840,7 @@ export default function SociosView() {
             activeTab === 'externos' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-100'
           }`}
         >
-          Externos (No Socios) ({externos.length})
+          Externos ({externos.length})
         </button>
         <button
           type="button"
@@ -697,7 +850,7 @@ export default function SociosView() {
           }`}
         >
           <History className="w-3.5 h-3.5" />
-          <span>Historial de Traspasos ({traspasos.length})</span>
+          <span>Traspasos ({traspasos.length})</span>
         </button>
       </div>
 
@@ -723,7 +876,127 @@ export default function SociosView() {
         </div>
       )}
 
-      {activeTab === 'traspasos' ? (
+      {activeTab === 'grupos' ? (
+        <div className="space-y-4">
+          <div className="bg-purple-50 border border-purple-200 rounded-2xl p-4 text-xs text-purple-950 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div>
+              <p className="font-bold">Grupos de Cobro ({gruposCobro.length})</p>
+              <p className="text-purple-800 mt-0.5">
+                Los puestos agrupados generan una sola boleta mensual a nombre del titular responsable, evitando cobros duplicados.
+              </p>
+            </div>
+            {isAdmin && (
+              <button
+                type="button"
+                onClick={() => {
+                  setEditingGrupo(null)
+                  setIsGrupoModalOpen(true)
+                }}
+                className="px-3.5 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-xl font-bold flex items-center gap-1.5 self-start sm:self-center"
+              >
+                <Layers className="w-3.5 h-3.5" />
+                <span>+ Crear Grupo</span>
+              </button>
+            )}
+          </div>
+
+          {gruposCobro.length === 0 ? (
+            <div className="bg-white rounded-2xl p-10 text-center border border-slate-200 text-xs text-slate-500 space-y-2">
+              <Layers className="w-10 h-10 mx-auto text-slate-300" />
+              <p>Aún no hay grupos de cobro creados. Usa "+ Crear Grupo" para agrupar 2 o más puestos.</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {gruposCobro.map(({ lider, miembros, resumen }) => (
+                <div key={lider.id} className="bg-white rounded-2xl p-4 border border-purple-200 shadow-sm space-y-3">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="px-2.5 py-1 rounded-lg bg-purple-700 text-white text-xs font-black">
+                          {resumen.puestosLabel}
+                        </span>
+                        {lider.nombre_grupo && (
+                          <span className="px-2 py-0.5 rounded bg-purple-100 text-purple-900 text-xs font-bold">
+                            {lider.nombre_grupo}
+                          </span>
+                        )}
+                      </div>
+                      <h4 className="font-extrabold text-sm sm:text-base text-slate-900 mt-1.5">
+                        Titular: {lider.socios?.nombre || 'Sin socio'}
+                      </h4>
+                    </div>
+
+                    {isAdmin && (
+                      <div className="flex items-center gap-1 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEditingGrupo({ lider, miembros })
+                            setIsGrupoModalOpen(true)
+                          }}
+                          className="px-2.5 py-1.5 rounded-lg bg-blue-50 text-blue-700 hover:bg-blue-100 text-xs font-bold flex items-center gap-1"
+                        >
+                          <Edit2 className="w-3.5 h-3.5" />
+                          <span>Editar</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setConfirmState({
+                              open: true,
+                              tipo: 'edicion',
+                              entity: 'desagrupar',
+                              target: { lider, miembros },
+                              advertencia: 'Todos los puestos del grupo volverán a cobrarse de forma individual en los próximos meses.',
+                            })
+                          }
+                          className="px-2.5 py-1.5 rounded-lg bg-red-50 text-red-700 hover:bg-red-100 text-xs font-bold flex items-center gap-1"
+                        >
+                          <Unlink className="w-3.5 h-3.5" />
+                          <span>Desagrupar</span>
+                        </button>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="bg-slate-50 rounded-xl p-3 border border-slate-100 space-y-1.5 text-xs">
+                    <span className="text-[10px] font-bold uppercase text-slate-400 block">
+                      Integrantes del Grupo ({1 + miembros.length} puestos)
+                    </span>
+                    <div className="flex flex-wrap gap-1.5">
+                      <span className="px-2 py-1 rounded-lg bg-amber-100 text-amber-900 border border-amber-300 font-bold text-[11px]">
+                        ★ {lider.numero_identificador} • {lider.socios?.nombre}
+                      </span>
+                      {miembros.map((m) => (
+                        <span
+                          key={m.id}
+                          className="px-2 py-1 rounded-lg bg-white text-slate-700 border border-slate-200 font-medium text-[11px]"
+                        >
+                          {m.numero_identificador} • {m.socios?.nombre}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="pt-2 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2 text-xs">
+                    <span className="text-slate-600">
+                      Modalidad:{' '}
+                      <strong className="text-slate-900 capitalize">
+                        {lider.tipo === 'variable'
+                          ? `Variable (Tarifador ${lider.codigo_tarifador || 'S/C'})`
+                          : lider.subtipo_fijo === 'personalizado'
+                          ? `Personalizado (${parseFloat(lider.monto_fijo_personalizado || 0).toFixed(2)} Bs)`
+                          : `Fijo (${(lider.subtipo_fijo || 'puesto_abierto').replace('_', ' ')})`}
+                      </strong>
+                    </span>
+                    <span className="text-[11px] font-bold text-purple-700">1 boleta mensual</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      ) : activeTab === 'traspasos' ? (
         <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm">
           <div className="px-5 py-3.5 bg-slate-50 border-b border-slate-200">
             <span className="text-xs font-bold uppercase tracking-wider text-slate-700">
@@ -943,29 +1216,37 @@ export default function SociosView() {
                 const unidadesSocio = socio.unidades_cobro || []
                 const unidad = unidadesSocio[0]
                 const isVariable = unidad?.tipo === 'variable'
-                const isMultiPuesto = (unidad?.cantidad_puestos || 1) > 1
+                const hijos = unidad ? hijosPorPadre[unidad.id] || [] : []
+                const esLiderGrupo = Boolean(unidad && !unidad.grupo_padre_id && (hijos.length > 0 || (unidad.cantidad_puestos || 1) > 1))
+                const esMiembroGrupo = Boolean(unidad?.grupo_padre_id)
+                const unidadLiderObj = esMiembroGrupo ? allUnidadesMap[unidad.grupo_padre_id] : null
+                const resumenGrupo = esLiderGrupo ? formatResumenGrupo(unidad, hijos) : null
+                const menuOpen = openMenuSocioId === socio.id
 
                 return (
                   <div
                     key={socio.id}
-                    className={`bg-white rounded-2xl p-4 border transition-all hover:shadow-md flex flex-col justify-between ${
+                    className={`bg-white rounded-2xl p-4 border transition-all hover:shadow-md flex flex-col justify-between relative ${
                       socio.activo ? 'border-slate-200 hover:border-emerald-300' : 'border-slate-200 bg-slate-50/70 opacity-75'
                     }`}
                   >
                     <div>
                       <div className="flex items-start justify-between gap-2 pb-2.5 border-b border-slate-100">
-                        <div>
-                          <h4 className="font-bold text-sm text-slate-900 leading-tight">{socio.nombre}</h4>
+                        <div className="min-w-0 flex-1">
+                          <h4 className="font-extrabold text-base sm:text-lg text-slate-900 leading-tight break-words">
+                            {socio.nombre}
+                          </h4>
                           {socio.telefono && (
-                            <p className="text-xs text-slate-500 flex items-center gap-1 mt-0.5">
+                            <p className="text-xs text-slate-500 flex items-center gap-1 mt-1">
                               <Phone className="w-3 h-3 text-slate-400" />
                               <span>{socio.telefono}</span>
                             </p>
                           )}
                         </div>
                         {isAdmin && (
-                          <div className="flex items-center gap-1">
+                          <div className="relative flex items-center gap-1 shrink-0">
                             <button
+                              type="button"
                               onClick={() => openEditModal(socio)}
                               title="Editar socio y unidad"
                               className="p-1.5 rounded-lg text-blue-600 hover:bg-blue-50 transition-colors"
@@ -973,12 +1254,53 @@ export default function SociosView() {
                               <Edit2 className="w-4 h-4" />
                             </button>
                             <button
-                              onClick={() => requestDeleteSocio(socio)}
-                              title="Eliminar socio cargado por error"
-                              className="p-1.5 rounded-lg text-red-600 hover:bg-red-50 transition-colors"
+                              type="button"
+                              onClick={() => setOpenMenuSocioId(menuOpen ? null : socio.id)}
+                              title="Más acciones"
+                              className="p-1.5 rounded-lg text-slate-500 hover:bg-slate-100 transition-colors"
                             >
-                              <Trash2 className="w-4 h-4" />
+                              <MoreVertical className="w-4 h-4" />
                             </button>
+
+                            {menuOpen && (
+                              <div className="absolute right-0 top-9 z-30 w-52 bg-white rounded-xl shadow-xl border border-slate-200 py-1.5 text-xs">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setOpenMenuSocioId(null)
+                                    openEditModal(socio)
+                                  }}
+                                  className="w-full px-3.5 py-2 text-left text-slate-700 hover:bg-slate-50 flex items-center gap-2 font-semibold"
+                                >
+                                  <Edit2 className="w-3.5 h-3.5 text-blue-600" />
+                                  <span>Editar Socio / Puesto</span>
+                                </button>
+                                {unidad && unidad.activo !== false && !unidad.grupo_padre_id && (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setOpenMenuSocioId(null)
+                                      setTraspasoTarget({ socio, unidad })
+                                    }}
+                                    className="w-full px-3.5 py-2 text-left text-indigo-700 hover:bg-indigo-50 flex items-center gap-2 font-semibold"
+                                  >
+                                    <ArrowRightLeft className="w-3.5 h-3.5 text-indigo-600" />
+                                    <span>Transferir / Vender Puesto</span>
+                                  </button>
+                                )}
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setOpenMenuSocioId(null)
+                                    requestDeleteSocio(socio)
+                                  }}
+                                  className="w-full px-3.5 py-2 text-left text-red-600 hover:bg-red-50 flex items-center gap-2 font-semibold"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5 text-red-600" />
+                                  <span>Eliminar Socio</span>
+                                </button>
+                              </div>
+                            )}
                           </div>
                         )}
                       </div>
@@ -986,26 +1308,55 @@ export default function SociosView() {
                       <div className="mt-3 space-y-2 text-xs">
                         {unidadesSocio.length > 0 ? (
                           unidadesSocio.map((u) => (
-                            <div key={u.id} className="bg-slate-50 rounded-xl p-2.5 border border-slate-100 space-y-1.5">
-                              <div className="flex items-center justify-between">
-                                <span className="font-bold text-slate-800 flex items-center gap-1">
-                                  <Store className="w-3.5 h-3.5 text-slate-500" />
+                            <div key={u.id} className="bg-slate-50 rounded-xl p-3 border border-slate-100 space-y-2">
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-900 text-white text-xs sm:text-sm font-black tracking-wide">
+                                  <Store className="w-3.5 h-3.5 text-emerald-400" />
                                   {u.numero_identificador}
                                 </span>
                                 <span
                                   className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
-                                    u.tipo === 'variable' ? 'bg-amber-100 text-amber-800' : 'bg-blue-100 text-blue-800'
+                                    u.tipo === 'variable'
+                                      ? 'bg-amber-100 text-amber-800'
+                                      : u.subtipo_fijo === 'personalizado'
+                                      ? 'bg-emerald-100 text-emerald-800'
+                                      : 'bg-blue-100 text-blue-800'
                                   }`}
                                 >
-                                  {u.tipo === 'variable' ? 'Luz Variable' : u.subtipo_fijo?.replace('_', ' ') || 'Fijo'}
+                                  {u.tipo === 'variable'
+                                    ? 'Luz Variable'
+                                    : u.subtipo_fijo === 'personalizado'
+                                    ? `Pers. ${parseFloat(u.monto_fijo_personalizado || 0).toFixed(2)} Bs`
+                                    : u.subtipo_fijo?.replace('_', ' ') || 'Fijo'}
                                 </span>
                               </div>
 
-                              {(u.cantidad_puestos || 1) > 1 && (
-                                <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-purple-50 text-purple-700 border border-purple-200 text-[11px] font-semibold">
-                                  <Layers className="w-3 h-3" />
-                                  <span>{u.cantidad_puestos} puestos agrupados</span>
+                              {esLiderGrupo && resumenGrupo && (
+                                <div className="p-2 rounded-lg bg-purple-50 text-purple-900 border border-purple-200 text-[11px] space-y-0.5">
+                                  <div className="font-bold flex items-center gap-1">
+                                    <Layers className="w-3 h-3 text-purple-600" />
+                                    <span>
+                                      {resumenGrupo.puestosLabel}
+                                      {u.nombre_grupo ? ` • ${u.nombre_grupo}` : ''}
+                                    </span>
+                                  </div>
+                                  <p className="text-purple-700 truncate">{resumenGrupo.sociosLabel}</p>
                                 </div>
+                              )}
+
+                              {esMiembroGrupo && (
+                                <div className="p-2 rounded-lg bg-indigo-50 text-indigo-900 border border-indigo-200 text-[11px] flex items-center gap-1.5 font-semibold">
+                                  <Layers className="w-3 h-3 text-indigo-600 shrink-0" />
+                                  <span className="truncate">
+                                    Agrupado con: {unidadLiderObj?.socios?.nombre || 'Titular'} ({unidadLiderObj?.numero_identificador || ''})
+                                  </span>
+                                </div>
+                              )}
+
+                              {u.detalle_tarifa_personalizada && u.subtipo_fijo === 'personalizado' && (
+                                <p className="text-[11px] text-emerald-800 bg-emerald-50 px-2 py-1 rounded border border-emerald-200">
+                                  {u.detalle_tarifa_personalizada}
+                                </p>
                               )}
 
                               {u.codigo_tarifador && (
@@ -1018,17 +1369,6 @@ export default function SociosView() {
                                     {u.codigo_tarifador}
                                   </span>
                                 </div>
-                              )}
-
-                              {u.activo !== false && isAdmin && (
-                                <button
-                                  type="button"
-                                  onClick={() => setTraspasoTarget({ socio, unidad: u })}
-                                  className="w-full mt-1 py-1.5 px-2.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-lg text-[11px] font-bold flex items-center justify-center gap-1.5 transition-colors"
-                                >
-                                  <ArrowRightLeft className="w-3 h-3" />
-                                  <span>Transferir / Vender Puesto</span>
-                                </button>
                               )}
                             </div>
                           ))
@@ -1052,7 +1392,13 @@ export default function SociosView() {
                         Estado: {socio.activo ? <strong className="text-emerald-600">Activo</strong> : <span>Inactivo</span>}
                       </span>
                       <span className="text-[10px] text-slate-400 font-mono">
-                        {isMultiPuesto ? `${unidad.cantidad_puestos} puestos` : isVariable ? 'Variable' : 'Fijo'}
+                        {esLiderGrupo
+                          ? `${resumenGrupo?.miembrosCount || unidad.cantidad_puestos} puestos`
+                          : esMiembroGrupo
+                          ? 'En grupo'
+                          : isVariable
+                          ? 'Variable'
+                          : 'Fijo'}
                       </span>
                     </div>
                   </div>
@@ -1065,26 +1411,26 @@ export default function SociosView() {
 
       {/* Modal Socio / Puesto */}
       {isModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-sm overflow-y-auto">
-          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-lg my-8 overflow-hidden animate-fadeIn">
-            <div className="bg-slate-900 px-6 py-4 text-white flex items-center justify-between">
-              <div className="flex items-center space-x-2.5">
-                <div className="p-2 bg-emerald-500/20 text-emerald-400 rounded-lg">
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-2 sm:p-4 bg-black/60 backdrop-blur-sm">
+          <div className="w-full max-w-lg max-h-[88dvh] sm:max-h-[90dvh] flex flex-col overflow-hidden rounded-2xl bg-white shadow-2xl border border-slate-200 animate-fadeIn">
+            <div className="shrink-0 bg-slate-900 px-5 py-3.5 text-white flex items-center justify-between">
+              <div className="flex items-center space-x-2.5 min-w-0">
+                <div className="p-2 bg-emerald-500/20 text-emerald-400 rounded-lg shrink-0">
                   {isEditing ? <Edit2 className="w-5 h-5" /> : <UserPlus className="w-5 h-5" />}
                 </div>
-                <div>
-                  <h3 className="font-bold text-base leading-tight">
+                <div className="min-w-0">
+                  <h3 className="font-bold text-sm sm:text-base leading-tight truncate">
                     {isEditing ? 'Editar Socio y Unidad (Auditado)' : 'Carga Rápida de Socio'}
                   </h3>
-                  <p className="text-xs text-slate-400">Padrón oficial del mercado</p>
+                  <p className="text-[11px] sm:text-xs text-slate-400 truncate">Padrón oficial del mercado</p>
                 </div>
               </div>
-              <button onClick={() => setIsModalOpen(false)} className="p-1 rounded-lg text-slate-400 hover:text-white">
+              <button type="button" onClick={() => setIsModalOpen(false)} className="p-1.5 rounded-lg text-slate-300 hover:text-white shrink-0">
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            <div className="p-6 space-y-4 max-h-[75vh] overflow-y-auto">
+            <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-4 sm:p-6 space-y-4">
               <div className="space-y-3">
                 <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400 block border-b pb-1">
                   1. Datos del Socio
@@ -1182,25 +1528,107 @@ export default function SociosView() {
                           onChange={(e) => setTipo(e.target.value)}
                           className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-xl font-medium"
                         >
-                          <option value="variable">Variable (Base 58 Bs + Luz)</option>
                           <option value="fijo">Fijo (Sin tarifador)</option>
+                          <option value="variable">Variable (Base 58 Bs + Luz)</option>
                         </select>
                       </div>
                     </div>
 
                     {tipo === 'fijo' ? (
-                      <div>
-                        <label className="block text-xs font-semibold text-slate-700 mb-1">Subtipo de Tarifa Fija</label>
-                        <select
-                          value={subtipoFijo}
-                          onChange={(e) => setSubtipoFijo(e.target.value)}
-                          className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-xl"
-                        >
-                          <option value="puesto_abierto">Puesto Abierto (70 Bs)</option>
-                          <option value="puesto_cerrado">Puesto Cerrado (55 Bs)</option>
-                          <option value="ambulante">Ambulante (50 Bs)</option>
-                          <option value="no_socio">No Socio (50 Bs)</option>
-                        </select>
+                      <div className="space-y-3">
+                        <div>
+                          <label className="block text-xs font-semibold text-slate-700 mb-1">Subtipo de Tarifa Fija</label>
+                          <select
+                            value={subtipoFijo}
+                            onChange={(e) => setSubtipoFijo(e.target.value)}
+                            className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-xl"
+                          >
+                            <option value="puesto_abierto">Puesto Abierto (70 Bs)</option>
+                            <option value="puesto_cerrado">Puesto Cerrado (55 Bs)</option>
+                            <option value="ambulante">Ambulante (50 Bs)</option>
+                            <option value="no_socio">No Socio (50 Bs)</option>
+                            <option value="personalizado">Personalizado (Monto manual)</option>
+                          </select>
+                        </div>
+
+                        {subtipoFijo === 'personalizado' && (
+                          <div className="bg-white p-3 rounded-xl border border-blue-200 space-y-2.5">
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                              <div>
+                                <label className="block text-[11px] font-bold text-blue-900 mb-1">
+                                  Monto Total Mensual (Bs) <span className="text-red-500">*</span>
+                                </label>
+                                <input
+                                  type="number"
+                                  inputMode="decimal"
+                                  step="0.01"
+                                  min="0.01"
+                                  required
+                                  value={montoFijoPers}
+                                  onChange={(e) => handleMontoTotalPersChange(e.target.value)}
+                                  placeholder="Ej. 60.00"
+                                  className="w-full px-3 py-2 text-sm bg-blue-50/50 border border-blue-300 rounded-xl font-bold"
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                                  Motivo / Detalle Tarifa Especial
+                                </label>
+                                <input
+                                  type="text"
+                                  value={detallePers}
+                                  onChange={(e) => setDetallePers(e.target.value)}
+                                  placeholder="Ej. Puesto medio / acuerdo"
+                                  className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-300 rounded-xl"
+                                />
+                              </div>
+                            </div>
+
+                            <div className="pt-1 border-t border-slate-100">
+                              <span className="text-[10px] font-bold uppercase text-slate-500 block mb-1.5">
+                                Desglose Interno Automático (Guardia / Agua / Grupo Luz)
+                              </span>
+                              <div className="grid grid-cols-3 gap-2">
+                                <div>
+                                  <label className="block text-[10px] font-semibold text-slate-600 mb-0.5">Guardia (Bs)</label>
+                                  <input
+                                    type="number"
+                                    inputMode="decimal"
+                                    step="0.01"
+                                    min="0"
+                                    value={guardiaPers}
+                                    onChange={(e) => handleDesglosePersChange('g', e.target.value)}
+                                    className="w-full px-2 py-1.5 text-xs bg-slate-50 border border-slate-300 rounded-lg font-bold"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="block text-[10px] font-semibold text-slate-600 mb-0.5">Agua (Bs)</label>
+                                  <input
+                                    type="number"
+                                    inputMode="decimal"
+                                    step="0.01"
+                                    min="0"
+                                    value={aguaPers}
+                                    onChange={(e) => handleDesglosePersChange('a', e.target.value)}
+                                    className="w-full px-2 py-1.5 text-xs bg-slate-50 border border-slate-300 rounded-lg font-bold"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="block text-[10px] font-semibold text-slate-600 mb-0.5">Grupo Luz (Bs)</label>
+                                  <input
+                                    type="number"
+                                    inputMode="decimal"
+                                    step="0.01"
+                                    min="0"
+                                    value={luzPers}
+                                    onChange={(e) => handleDesglosePersChange('l', e.target.value)}
+                                    className="w-full px-2 py-1.5 text-xs bg-slate-50 border border-slate-300 rounded-lg font-bold"
+                                  />
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        )}
                       </div>
                     ) : (
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -1218,6 +1646,7 @@ export default function SociosView() {
                           <label className="block text-xs font-semibold text-slate-700 mb-1">Lectura Inicial (kWh)</label>
                           <input
                             type="number"
+                            inputMode="decimal"
                             step="0.01"
                             value={ultimaLectura}
                             onChange={(e) => setUltimaLectura(e.target.value)}
@@ -1227,43 +1656,31 @@ export default function SociosView() {
                       </div>
                     )}
 
-                    <div className="pt-2 border-t border-slate-200 flex items-center justify-between">
-                      <label className="text-xs font-semibold text-slate-700 flex items-center gap-1.5">
-                        <Layers className="w-3.5 h-3.5 text-indigo-600" />
-                        Puestos Agrupados
-                      </label>
-                      <div className="flex items-center space-x-2">
-                        {[1, 2, 3].map((num) => (
-                          <button
-                            key={num}
-                            type="button"
-                            onClick={() => setCantidadPuestos(num)}
-                            className={`px-3 py-1 rounded-lg text-xs font-bold ${
-                              cantidadPuestos === num ? 'bg-purple-600 text-white' : 'bg-white border border-slate-300 text-slate-700'
-                            }`}
-                          >
-                            {num}
-                          </button>
-                        ))}
+                    {isEditing && editingUnidadId && isAdmin && !editingSocioOriginal?.unidades_cobro?.[0]?.grupo_padre_id && (
+                      <div className="pt-2 border-t border-slate-200 flex justify-end">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const uTarget = editingSocioOriginal?.unidades_cobro?.[0]
+                            if (uTarget) {
+                              setIsModalOpen(false)
+                              setTraspasoTarget({ socio: editingSocioOriginal, unidad: uTarget })
+                            }
+                          }}
+                          className="px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-lg text-xs font-bold inline-flex items-center gap-1.5"
+                        >
+                          <ArrowRightLeft className="w-3.5 h-3.5" />
+                          <span>Transferir / Vender Puesto</span>
+                        </button>
                       </div>
-                    </div>
-
-                    {cantidadPuestos > 1 && (
-                      <input
-                        type="text"
-                        value={nombresTitulares}
-                        onChange={(e) => setNombresTitulares(e.target.value)}
-                        placeholder="Nombres de titulares agrupados (Opcional)"
-                        className="w-full px-3 py-2 text-xs bg-white border border-slate-300 rounded-xl"
-                      />
                     )}
                   </div>
                 )}
               </div>
             </div>
 
-            <div className="bg-slate-50 px-6 py-4 border-t border-slate-200 flex flex-col sm:flex-row items-center justify-end gap-2.5">
-              <button type="button" onClick={() => setIsModalOpen(false)} className="px-4 py-2 text-xs font-semibold text-slate-600">
+            <div className="shrink-0 border-t border-slate-200 bg-white px-4 py-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] flex flex-wrap items-center justify-end gap-2">
+              <button type="button" onClick={() => setIsModalOpen(false)} className="px-3 py-2 text-xs font-semibold text-slate-600">
                 Cancelar
               </button>
               {!isEditing && (
@@ -1271,20 +1688,20 @@ export default function SociosView() {
                   type="button"
                   disabled={saving}
                   onClick={() => handleSave(true)}
-                  className="px-4 py-2 bg-emerald-50 text-emerald-700 border border-emerald-300 rounded-xl text-xs font-bold flex items-center gap-1.5"
+                  className="px-3 py-2 bg-emerald-50 text-emerald-700 border border-emerald-300 rounded-xl text-xs font-bold flex items-center gap-1"
                 >
-                  <PlusCircle className="w-4 h-4" />
-                  <span>{saving ? 'Guardando...' : 'Guardar y agregar otro'}</span>
+                  <PlusCircle className="w-3.5 h-3.5" />
+                  <span>{saving ? 'Guardando...' : 'Guardar y otro'}</span>
                 </button>
               )}
               <button
                 type="button"
                 disabled={saving}
                 onClick={() => handleSave(false)}
-                className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5"
+                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5"
               >
                 <CheckCircle2 className="w-4 h-4" />
-                <span>{saving ? 'Guardando...' : isEditing ? 'Actualizar Socio' : 'Guardar y Cerrar'}</span>
+                <span>{saving ? 'Guardando...' : isEditing ? 'Actualizar Socio' : 'Guardar'}</span>
               </button>
             </div>
           </div>
@@ -1293,21 +1710,22 @@ export default function SociosView() {
 
       {/* Modal Externo */}
       {isExtModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-sm overflow-y-auto">
-          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-md my-8 overflow-hidden">
-            <div className="bg-slate-900 px-6 py-4 text-white flex items-center justify-between">
-              <div>
-                <h3 className="font-bold text-base">
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-2 sm:p-4 bg-black/60 backdrop-blur-sm">
+          <div className="w-full max-w-md max-h-[88dvh] sm:max-h-[90dvh] flex flex-col overflow-hidden rounded-2xl bg-white shadow-2xl border border-slate-200">
+            <div className="shrink-0 bg-slate-900 px-5 py-3.5 text-white flex items-center justify-between">
+              <div className="min-w-0">
+                <h3 className="font-bold text-sm sm:text-base truncate">
                   {editingExtId ? 'Editar Aportante Externo (Auditado)' : 'Registrar Aportante Externo'}
                 </h3>
-                <p className="text-xs text-slate-400">Solo aporte de Guardia y Agua</p>
+                <p className="text-[11px] sm:text-xs text-slate-400 truncate">Solo aporte de Guardia y Agua</p>
               </div>
-              <button onClick={() => setIsExtModalOpen(false)}>
-                <X className="w-5 h-5 text-slate-400 hover:text-white" />
+              <button type="button" onClick={() => setIsExtModalOpen(false)} className="p-1.5 text-slate-300 hover:text-white shrink-0">
+                <X className="w-5 h-5" />
               </button>
             </div>
 
-            <form onSubmit={handleSaveExterno} className="p-6 space-y-4">
+            <form onSubmit={handleSaveExterno} className="flex flex-col flex-1 min-h-0 overflow-hidden">
+              <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-4 sm:p-6 space-y-4">
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
                   Nombre Completo <span className="text-red-500">*</span>
@@ -1402,14 +1820,16 @@ export default function SociosView() {
                 <span>Aportante Activo</span>
               </label>
 
-              <div className="pt-2 flex justify-end gap-2 border-t border-slate-100">
-                <button type="button" onClick={() => setIsExtModalOpen(false)} className="px-4 py-2 text-xs text-slate-600">
+              </div>
+
+              <div className="shrink-0 border-t border-slate-200 bg-white px-4 py-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] flex items-center justify-end gap-2">
+                <button type="button" onClick={() => setIsExtModalOpen(false)} className="px-4 py-2 text-xs font-semibold text-slate-600">
                   Cancelar
                 </button>
                 <button
                   type="submit"
                   disabled={savingExt}
-                  className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold"
+                  className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold"
                 >
                   {savingExt ? 'Guardando...' : editingExtId ? 'Actualizar Externo' : 'Guardar Externo'}
                 </button>
@@ -1418,6 +1838,23 @@ export default function SociosView() {
           </div>
         </div>
       )}
+
+      <GrupoCobroModal
+        isOpen={isGrupoModalOpen}
+        onClose={() => {
+          setIsGrupoModalOpen(false)
+          setEditingGrupo(null)
+        }}
+        socios={socios}
+        editingGroup={editingGrupo}
+        onSaved={(nombreGrupoGuardado) => {
+          setStatusMessage({
+            type: 'success',
+            text: `¡Grupo "${nombreGrupoGuardado}" guardado correctamente! Se cobrará en una sola boleta mensual.`,
+          })
+          fetchAll()
+        }}
+      />
 
       <TraspasoPuestoModal
         isOpen={Boolean(traspasoTarget)}
@@ -1441,7 +1878,9 @@ export default function SociosView() {
         onConfirm={handleConfirmAudit}
         tipo={confirmState.tipo}
         titulo={
-          confirmState.entity === 'socio'
+          confirmState.entity === 'desagrupar'
+            ? 'Desagrupar Puestos del Grupo'
+            : confirmState.entity === 'socio'
             ? confirmState.tipo === 'eliminacion'
               ? 'Eliminar Socio y Puesto'
               : 'Editar Datos de Socio y Puesto'
@@ -1452,7 +1891,10 @@ export default function SociosView() {
         descripcion={
           confirmState.target
             ? `${confirmState.tipo === 'eliminacion' ? 'Se eliminará' : 'Se actualizará'} a "${
-                confirmState.target.nombre || confirmState.target.nombre_completo
+                confirmState.target.lider?.nombre_grupo ||
+                confirmState.target.lider?.numero_identificador ||
+                confirmState.target.nombre ||
+                confirmState.target.nombre_completo
               }" registrando el snapshot completo en bitacora_auditoria.`
             : ''
         }

@@ -226,6 +226,25 @@ ALTER TABLE periodos_mensuales
   ADD COLUMN IF NOT EXISTS factura_alcantarillado_bs NUMERIC(10,2) DEFAULT 0,
   ADD COLUMN IF NOT EXISTS factura_agua_aporte_socio_bs NUMERIC(10,2) DEFAULT 0;
 
+-- ============================================================
+-- GRUPOS DE COBRO Y TARIFA FIJA PERSONALIZADA
+-- ============================================================
+ALTER TABLE unidades_cobro
+  ADD COLUMN IF NOT EXISTS grupo_padre_id UUID REFERENCES unidades_cobro(id) ON DELETE SET NULL,
+  ADD COLUMN IF NOT EXISTS nombre_grupo TEXT;
+
+CREATE INDEX IF NOT EXISTS idx_unidades_cobro_grupo_padre
+  ON unidades_cobro(grupo_padre_id);
+
+ALTER TABLE unidades_cobro
+  ADD COLUMN IF NOT EXISTS monto_fijo_personalizado NUMERIC(10,2),
+  ADD COLUMN IF NOT EXISTS monto_guardia_personalizado NUMERIC(10,2),
+  ADD COLUMN IF NOT EXISTS monto_agua_personalizado NUMERIC(10,2),
+  ADD COLUMN IF NOT EXISTS monto_luz_personalizado NUMERIC(10,2),
+  ADD COLUMN IF NOT EXISTS detalle_tarifa_personalizada TEXT;
+
+DO $$ DECLARE c RECORD; BEGIN FOR c IN SELECT conname FROM pg_constraint WHERE conrelid = 'public.unidades_cobro'::regclass AND contype = 'c' AND pg_get_constraintdef(oid) ILIKE '%subtipo_fijo%' LOOP EXECUTE format('ALTER TABLE public.unidades_cobro DROP CONSTRAINT IF EXISTS %I;', c.conname); END LOOP; END $$;
+
 -- Recargar caché de Supabase
 NOTIFY pgrst, 'reload schema';
 
