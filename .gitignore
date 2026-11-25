@@ -27,3 +27,9 @@ dist-ssr
 .env
 .env*.local
 !.env.example
+
+# Datos reales de padrón local (no subir a git)
+supabase/seed_padron_inicial.sql
+supabase/seed_completo_limpio.sql
+supabase/seed_cobros_jul_sep.sql
+supabase/seed_arranque_y_deudores.sql

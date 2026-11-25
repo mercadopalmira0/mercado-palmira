@@ -19,6 +19,21 @@ import {
   ClipboardCheck
 } from 'lucide-react'
 
+function getDefaultFechaCorte(mesFin, anioFin) {
+  const m = parseInt(mesFin, 10) || 1
+  const y = parseInt(anioFin, 10) || new Date().getFullYear()
+  const nextMonth = m === 12 ? 1 : m + 1
+  const nextYear = m === 12 ? y + 1 : y
+  return `${nextYear}-${String(nextMonth).padStart(2, '0')}-24`
+}
+
+function formatFechaDMY(fechaStr) {
+  if (!fechaStr) return ''
+  const [y, m, d] = String(fechaStr).split('T')[0].split('-')
+  if (y && m && d) return `${d}/${m}/${y}`
+  return fechaStr
+}
+
 export default function RendicionView() {
   const { user, isAdmin } = useAuth()
   const today = new Date()
@@ -31,6 +46,7 @@ export default function RendicionView() {
   const [anioInicio, setAnioInicio] = useState(currentYear)
   const [mesFin, setMesFin] = useState(currentMonth)
   const [anioFin, setAnioFin] = useState(currentYear)
+  const [fechaCorte, setFechaCorte] = useState(() => getDefaultFechaCorte(currentMonth, currentYear))
 
   const [consolidado, setConsolidado] = useState(null)
   const [periodosRango, setPeriodosRango] = useState([])
@@ -56,6 +72,7 @@ export default function RendicionView() {
         { data: cobrosData },
         { data: pagosAfiliacionData },
         { data: afiliacionesData },
+        { data: deudoresCiclosData },
         { data: pagosDeudoresData },
         { data: cobrosExternosData },
         { data: unidadesData },
@@ -100,6 +117,10 @@ export default function RendicionView() {
           socios (id, nombre, telefono),
           pagos_afiliacion (id, monto, estado)
         `),
+        supabase.from('deudores_ciclos').select(`
+          *,
+          socios (id, nombre, telefono)
+        `),
         supabase.from('pagos_deudores_ciclos').select(`
           id, monto, metodo_pago, fecha_pago, anulado, nro_talonario_fisico,
           deudores_ciclos (caja, nombre_deudor)
@@ -108,7 +129,7 @@ export default function RendicionView() {
           id, anio, mes, monto_pagado, monto_guardia, monto_agua, es_monto_editado, metodo_pago, nro_talonario_fisico, fecha_pago, anulado,
           aportantes_externos (nombre_completo, referencia_ubicacion)
         `),
-        supabase.from('unidades_cobro').select('id, socio_responsable_id, cantidad_puestos, activo, grupo_padre_id').is('grupo_padre_id', null),
+        supabase.from('unidades_cobro').select('id, socio_responsable_id, cantidad_puestos, activo, grupo_padre_id'),
         supabase.from('egresos').select('*'),
         supabase.from('movimientos_internos').select('*'),
       ])
@@ -129,6 +150,7 @@ export default function RendicionView() {
         anioInicio,
         mesFin,
         anioFin,
+        fechaCorte,
         ciclosHacienda: ciclosData || [],
         saldosIniciales: saldosData || [],
         pagosServicios: pagosServiciosData || [],
@@ -139,6 +161,7 @@ export default function RendicionView() {
         movimientosInternos: movimientosData || [],
         cobrosServicios: cobrosData || [],
         afiliaciones: afiliacionesData || [],
+        deudoresCiclos: deudoresCiclosData || [],
         unidadesCobro: unidadesData || [],
       })
 
@@ -153,7 +176,17 @@ export default function RendicionView() {
 
   useEffect(() => {
     loadData()
-  }, [mesInicio, anioInicio, mesFin, anioFin])
+  }, [mesInicio, anioInicio, mesFin, anioFin, fechaCorte])
+
+  const handleMesFinChange = (newMes) => {
+    setMesFin(newMes)
+    setFechaCorte(getDefaultFechaCorte(newMes, anioFin))
+  }
+
+  const handleAnioFinChange = (newAnio) => {
+    setAnioFin(newAnio)
+    setFechaCorte(getDefaultFechaCorte(mesFin, newAnio))
+  }
 
   const setPreset = (tipo) => {
     if (tipo === 'trimestre') {
@@ -162,17 +195,20 @@ export default function RendicionView() {
       setAnioInicio(currentYear)
       setMesFin(currentMonth)
       setAnioFin(currentYear)
+      setFechaCorte(getDefaultFechaCorte(currentMonth, currentYear))
     } else if (tipo === 'cuatrimestre') {
       const startM = currentMonth >= 4 ? currentMonth - 3 : 1
       setMesInicio(startM)
       setAnioInicio(currentYear)
       setMesFin(currentMonth)
       setAnioFin(currentYear)
+      setFechaCorte(getDefaultFechaCorte(currentMonth, currentYear))
     } else if (tipo === 'anio') {
       setMesInicio(1)
       setAnioInicio(currentYear)
       setMesFin(12)
       setAnioFin(currentYear)
+      setFechaCorte(getDefaultFechaCorte(12, currentYear))
     }
   }
 
@@ -216,13 +252,10 @@ export default function RendicionView() {
         .in('id', ids)
       if (pError) throw pError
 
-      // 2. Determinar fecha de cierre del ciclo y fecha de inicio del nuevo ciclo
-      const endOfRangeDate = new Date(anioFin, mesFin, 0)
-      const isPastRange = endOfRangeDate < new Date(now.getFullYear(), now.getMonth(), now.getDate())
-      const fechaCierreStr = isPastRange ? getLocalDateStr(endOfRangeDate) : getLocalDateStr(now)
-      const nextDayDate = isPastRange
-        ? new Date(endOfRangeDate.getFullYear(), endOfRangeDate.getMonth(), endOfRangeDate.getDate() + 1)
-        : now
+      // 2. Fecha de cierre exacta = Fecha de Corte de Asamblea; nuevo ciclo inicia al día siguiente
+      const fechaCierreStr = fechaCorte || getDefaultFechaCorte(mesFin, anioFin)
+      const [cy, cm, cd] = fechaCierreStr.split('-').map(Number)
+      const nextDayDate = new Date(cy, cm - 1, cd + 1)
       const fechaInicioNuevoStr = getLocalDateStr(nextDayDate)
 
       const saldosCierre = {
@@ -343,8 +376,9 @@ export default function RendicionView() {
         usuarioId: user?.id,
         accion: 'RENDICION_EN_ASAMBLEA_SELLADA',
         detalleJson: {
-          descripcion: `Rendición sellada (${mesInicio}/${anioInicio} - ${mesFin}/${anioFin}). Nuevo ciclo: ${nombreNuevoCiclo}. Deudas trasladadas: ${trasladadosCount}.`,
+          descripcion: `Rendición sellada (${mesInicio}/${anioInicio} - ${mesFin}/${anioFin}, corte ${fechaCierreStr}). Nuevo ciclo: ${nombreNuevoCiclo}. Deudas trasladadas: ${trasladadosCount}.`,
           rango: `${mesInicio}/${anioInicio} - ${mesFin}/${anioFin}`,
+          fecha_corte: fechaCierreStr,
           periodos_afectados: ids.length,
           saldos_cierre: saldosCierre,
           deudores_trasladados: trasladadosCount,
@@ -354,7 +388,7 @@ export default function RendicionView() {
       setIsCloseModalOpen(false)
       setStatusMessage({
         type: 'success',
-        text: `¡Periodo rendido en Asamblea! Se cerró el ciclo, se abrió "${nombreNuevoCiclo}" con los saldos exactos${trasladadosCount > 0 ? ` y se trasladaron ${trasladadosCount} deudas a Deudores` : ''}.`,
+        text: `¡Periodo rendido en Asamblea! Se cerró el ciclo al ${formatFechaDMY(fechaCierreStr)}, se abrió "${nombreNuevoCiclo}" desde el ${formatFechaDMY(fechaInicioNuevoStr)} con los saldos exactos${trasladadosCount > 0 ? ` y se trasladaron ${trasladadosCount} deudas a Deudores` : ''}.`,
       })
       await loadData()
     } catch (err) {
@@ -372,6 +406,7 @@ export default function RendicionView() {
       anioInicio,
       mesFin,
       anioFin,
+      fechaCorte,
       fechaEmision: new Date().toLocaleDateString('es-BO'),
     })
   }
@@ -447,7 +482,7 @@ export default function RendicionView() {
         </div>
 
         {/* Selector de Fechas */}
-        <div className="pt-3 border-t border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+        <div className="pt-3 border-t border-slate-100 flex flex-col lg:flex-row lg:items-center justify-between gap-3 text-xs">
           <div className="flex flex-wrap items-center gap-2">
             <span className="font-semibold text-slate-600">Rango desde:</span>
             <div className="flex items-center bg-slate-50 border border-slate-200 rounded-xl px-2 py-1">
@@ -479,7 +514,7 @@ export default function RendicionView() {
             <div className="flex items-center bg-slate-50 border border-slate-200 rounded-xl px-2 py-1">
               <select
                 value={mesFin}
-                onChange={(e) => setMesFin(parseInt(e.target.value, 10))}
+                onChange={(e) => handleMesFinChange(parseInt(e.target.value, 10))}
                 className="bg-transparent font-bold text-slate-800 pr-1 focus:outline-none"
               >
                 {MESES.slice(1).map((m, i) => (
@@ -490,7 +525,7 @@ export default function RendicionView() {
               </select>
               <select
                 value={anioFin}
-                onChange={(e) => setAnioFin(parseInt(e.target.value, 10))}
+                onChange={(e) => handleAnioFinChange(parseInt(e.target.value, 10))}
                 className="bg-transparent font-bold text-slate-800 pl-1 border-l border-slate-200 focus:outline-none"
               >
                 {[2024, 2025, 2026, 2027, 2028].map((y) => (
@@ -500,6 +535,16 @@ export default function RendicionView() {
                 ))}
               </select>
             </div>
+
+            <label className="flex items-center gap-1.5 bg-emerald-50 border border-emerald-200 rounded-xl px-2.5 py-1">
+              <span className="font-bold text-emerald-900">Fecha de Corte de Asamblea:</span>
+              <input
+                type="date"
+                value={fechaCorte}
+                onChange={(e) => setFechaCorte(e.target.value)}
+                className="bg-transparent font-bold text-emerald-950 focus:outline-none"
+              />
+            </label>
           </div>
 
           <div className="flex items-center space-x-1.5 font-medium">
@@ -560,7 +605,10 @@ export default function RendicionView() {
 
             <div className="text-left sm:text-right text-xs text-slate-600 space-y-0.5">
               <p>
-                <strong>Periodo Rendido:</strong> {MESES[mesInicio]} {anioInicio} a {MESES[mesFin]} {anioFin}
+                <strong>Periodo Rendido:</strong> {MESES[mesInicio]} {anioInicio} a {MESES[mesFin]} {anioFin} ({mesInicio}/{anioInicio} - {mesFin}/{anioFin})
+              </p>
+              <p>
+                <strong>Fecha de Corte de Caja:</strong> {formatFechaDMY(fechaCorte)}
               </p>
               <p>
                 <strong>Fecha de Emisión:</strong> {new Date().toLocaleDateString('es-BO')}
@@ -877,19 +925,22 @@ export default function RendicionView() {
               3. Anexo de Socios con Saldos Pendientes / Mora al Corte
             </h3>
 
-            {consolidado.deudoresServicios.length === 0 && consolidado.deudoresAfiliaciones.length === 0 ? (
+            {consolidado.deudoresServicios.length === 0 &&
+            consolidado.deudoresAfiliaciones.length === 0 &&
+            (consolidado.deudoresAnteriores || []).length === 0 ? (
               <p className="text-xs text-emerald-700 font-semibold">
-                ¡Excelente! No existen deudas pendientes de servicios ni afiliaciones al corte del periodo.
+                ¡Excelente! No existen deudas pendientes de servicios, afiliaciones ni gestiones anteriores al corte del periodo.
               </p>
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full text-xs text-left border-collapse border border-slate-200">
                   <thead>
                     <tr className="bg-red-50 text-red-900 font-bold border-b border-slate-200">
+                      <th className="p-2 border-r border-slate-200">Tipo Deuda</th>
                       <th className="p-2 border-r border-slate-200">Socio</th>
                       <th className="p-2 border-r border-slate-200">Teléfono</th>
                       <th className="p-2 border-r border-slate-200">Puesto / Detalle</th>
-                      <th className="p-2 border-r border-slate-200">Periodo / Concepto</th>
+                      <th className="p-2 border-r border-slate-200">Periodo / Ciclo Origen</th>
                       <th className="p-2 border-r border-slate-200 text-right">Total (Bs)</th>
                       <th className="p-2 border-r border-slate-200 text-right">Abonado (Bs)</th>
                       <th className="p-2 border-r border-slate-200 text-right text-red-700 font-black">Deuda (Bs)</th>
@@ -899,6 +950,11 @@ export default function RendicionView() {
                   <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
                     {consolidado.deudoresServicios.map((d, i) => (
                       <tr key={`s-${i}`}>
+                        <td className="p-2 border-r border-slate-200">
+                          <span className="px-2 py-0.5 rounded bg-red-100 text-red-800 text-[10px] font-bold">
+                            Servicios Básicos
+                          </span>
+                        </td>
                         <td className="p-2 border-r border-slate-200 font-bold">{d.socio}</td>
                         <td className="p-2 border-r border-slate-200">{d.telefono || '-'}</td>
                         <td className="p-2 border-r border-slate-200">{d.puesto}</td>
@@ -908,15 +964,20 @@ export default function RendicionView() {
                         <td className="p-2 border-r border-slate-200 text-right font-bold text-red-700">
                           {d.saldoPendiente.toFixed(2)}
                         </td>
-                        <td className="p-2 text-right">{d.multa > 0 ? `${d.multa} Bs` : '0'}</td>
+                        <td className="p-2 text-right">{d.multa > 0 ? `${d.multa.toFixed(2)} Bs` : '0.00'}</td>
                       </tr>
                     ))}
                     {consolidado.deudoresAfiliaciones.map((a, i) => (
                       <tr key={`a-${i}`} className="bg-blue-50/30">
+                        <td className="p-2 border-r border-slate-200">
+                          <span className="px-2 py-0.5 rounded bg-blue-100 text-blue-800 text-[10px] font-bold">
+                            Cuota Afiliación
+                          </span>
+                        </td>
                         <td className="p-2 border-r border-slate-200 font-bold">{a.socio}</td>
                         <td className="p-2 border-r border-slate-200">{a.telefono || '-'}</td>
-                        <td className="p-2 border-r border-slate-200">Afiliación Nueva</td>
-                        <td className="p-2 border-r border-slate-200">Cuota {a.cuotaAcordada} Bs/mes</td>
+                        <td className="p-2 border-r border-slate-200">Afiliación Nueva (Cuota {a.cuotaAcordada} Bs/mes)</td>
+                        <td className="p-2 border-r border-slate-200">Plan {parseFloat(a.totalPlan).toFixed(2)} Bs</td>
                         <td className="p-2 border-r border-slate-200 text-right">{parseFloat(a.totalPlan).toFixed(2)}</td>
                         <td className="p-2 border-r border-slate-200 text-right text-emerald-700">{a.totalPagado.toFixed(2)}</td>
                         <td className="p-2 border-r border-slate-200 text-right font-bold text-red-700">
@@ -925,7 +986,55 @@ export default function RendicionView() {
                         <td className="p-2 text-right">-</td>
                       </tr>
                     ))}
+                    {(consolidado.deudoresAnteriores || []).map((da, i) => (
+                      <tr key={`h-${i}`} className="bg-amber-50/40">
+                        <td className="p-2 border-r border-slate-200">
+                          <span className="px-2 py-0.5 rounded bg-amber-100 text-amber-900 text-[10px] font-bold">
+                            {da.tipoDeuda}
+                          </span>
+                        </td>
+                        <td className="p-2 border-r border-slate-200 font-bold">{da.socio}</td>
+                        <td className="p-2 border-r border-slate-200">{da.telefono || '-'}</td>
+                        <td className="p-2 border-r border-slate-200">{da.puestoDetalle || da.detalleDeuda}</td>
+                        <td className="p-2 border-r border-slate-200">{da.cicloOrigen}</td>
+                        <td className="p-2 border-r border-slate-200 text-right">{da.montoOriginal.toFixed(2)}</td>
+                        <td className="p-2 border-r border-slate-200 text-right text-emerald-700">{da.montoPagado.toFixed(2)}</td>
+                        <td className="p-2 border-r border-slate-200 text-right font-bold text-red-700">
+                          {da.saldoPendiente.toFixed(2)}
+                        </td>
+                        <td className="p-2 text-right">-</td>
+                      </tr>
+                    ))}
                   </tbody>
+                  <tfoot className="bg-slate-50 border-t-2 border-slate-300 font-bold text-xs">
+                    <tr>
+                      <td colSpan={7} className="p-2 border-r border-slate-200 text-right text-slate-700">
+                        Subtotal Mora del Periodo (Servicios + Afiliaciones):
+                      </td>
+                      <td className="p-2 border-r border-slate-200 text-right text-red-700">
+                        {(consolidado.resumenMora?.subtotalMoraPeriodo || 0).toFixed(2)} Bs
+                      </td>
+                      <td className="p-2" />
+                    </tr>
+                    <tr>
+                      <td colSpan={7} className="p-2 border-r border-slate-200 text-right text-amber-900">
+                        Subtotal Deudas Anteriores (Heredadas):
+                      </td>
+                      <td className="p-2 border-r border-slate-200 text-right text-amber-800">
+                        {(consolidado.resumenMora?.subtotalDeudasAnteriores || 0).toFixed(2)} Bs
+                      </td>
+                      <td className="p-2" />
+                    </tr>
+                    <tr className="bg-slate-900 text-white">
+                      <td colSpan={7} className="p-2.5 border-r border-slate-700 text-right uppercase">
+                        Total General de Mora:
+                      </td>
+                      <td className="p-2.5 border-r border-slate-700 text-right text-amber-300 font-black">
+                        {(consolidado.resumenMora?.totalGeneralMora || 0).toFixed(2)} Bs
+                      </td>
+                      <td className="p-2.5" />
+                    </tr>
+                  </tfoot>
                 </table>
               </div>
             )}
@@ -961,7 +1070,7 @@ export default function RendicionView() {
                 <div className="min-w-0">
                   <h3 className="font-bold text-sm sm:text-base truncate">Cerrar Periodo y Abrir Nuevo Ciclo</h3>
                   <p className="text-[11px] sm:text-xs text-slate-400 truncate">
-                    Rango: {MESES[mesInicio]} {anioInicio} a {MESES[mesFin]} {anioFin}
+                    Rango: {MESES[mesInicio]} {anioInicio} a {MESES[mesFin]} {anioFin} • Corte: {formatFechaDMY(fechaCorte)}
                   </p>
                 </div>
               </div>
