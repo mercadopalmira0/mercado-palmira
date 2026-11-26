@@ -880,6 +880,11 @@ export function calcularConsolidadoRendicion({
   ingDeudoresServiciosEf = round2(ingDeudoresServiciosEf)
   ingDeudoresServiciosQr = round2(ingDeudoresServiciosQr)
   const totalIngDeudoresServicios = round2(ingDeudoresServiciosEf + ingDeudoresServiciosQr)
+  const totalDeudoresServicios = round2(
+    pagosDeudoresRango
+      .filter((p) => (p.deudores_ciclos?.caja || p.caja || 'servicios') === 'servicios')
+      .reduce((s, p) => s + (parseFloat(p.monto) || 0), 0)
+  )
 
   ingDeudoresAfiliacionesEf = round2(ingDeudoresAfiliacionesEf)
   ingDeudoresAfiliacionesQr = round2(ingDeudoresAfiliacionesQr)
