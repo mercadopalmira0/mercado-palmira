@@ -160,3 +160,32 @@
 4. **Fase 4 – Afiliaciones, Egresos y Movimientos Internos:** Módulo de afiliaciones (`1.500 Bs`), registro de egresos en las 2 cajas con foto a Drive, y registro de movimientos `QR ↔ Efectivo` y préstamos/reposiciones.
 5. **Fase 5 – Dashboard Laptop y Rendición de Cuentas (3-4 meses):** Panel de arqueo (`Efectivo` vs. `QR` por caja), consolidado por rango de meses en PDF imprimible y Excel con enlaces a Drive, bloqueo *"Rendido en Asamblea"* y botón de respaldo manual completo.
 6. **Fase 6 – Seguridad, Roles y Bitácora:** Activación de usuarios `directiva` (solo lectura), Edge Function para capturar IP/dispositivo, sesión única, alertas en rojo de cuentas compartidas y panel privado de Bitácora para el `admin`.
+
+---
+
+## 5. Estructura Actualizada del Proyecto y Módulos (`src/`)
+
+- **`src/context/`**
+  - `AuthContext.jsx`: Sesión Supabase Auth, verificación de rol (`admin` / `directiva`), registro de auditoría en login y cierre automático de sesión tras 30 minutos de inactividad.
+- **`src/lib/` (Utilidades y Motores Contables)**
+  - `supabase.js`: Cliente configurado de Supabase.
+  - `formatters.js`: Utilidades centralizadas (`MESES`, `round2`, `formatFechaDMY`, `getLocalDateStr`, `getNombreSocioCobro`, `getPerdonazoVigente`, `formatResumenGrupo`).
+  - `calculosCobro.js`: Cálculo mensual de tarifas fijas/variables (`0 kWh = 55 Bs`, redondeo de luz, multas con tope `70 Bs` y exención `≥ 35 Bs`, prórrogas, desglose interno).
+  - `calculosCaja.js`: Arqueo real en vivo de `Caja Servicios` y `Caja Afiliaciones` (`Efectivo` vs `QR`, movimientos internos, cobros externos y deudas de ciclos).
+  - `calculosRendicion.js`: Consolidación por rango/corte de rendición en asamblea, `buildMatrizPeriodo` y `buildMatrizDeudores` (mensuales, externos, heredados, afiliaciones y cobros extras).
+  - `exportExcel.js`: Exportación a Excel multi-hoja de la Rendición Consolidada y Matrices de Cumplimiento/Deudas con enlaces a Drive.
+  - `auditoria.js`, `backup.js`, `drive.js`, `whatsapp.js`: Bitácora inmutable, descarga de respaldo completo `.json`, puente a Google Drive y generación de recibos WhatsApp.
+- **`src/components/auth/` y `src/components/layout/`**
+  - `LoginScreen.jsx`, `AuthModal.jsx`, `Header.jsx`, `Sidebar.jsx`, `BottomNav.jsx`, `navigation.js`.
+- **`src/components/modals/`**
+  - `TarifasModal.jsx`, `SaldosInicialesModal.jsx`, `MovimientoInternoModal.jsx`, `FotoUploaderModal.jsx`, `GrupoCobroModal.jsx`, `TraspasoPuestoModal.jsx`, `ConfirmMotivoModal.jsx`.
+- **`src/components/views/` (Módulos Principales y Subcomponentes)**
+  - `InicioView.jsx`: Tablero principal de saldos por caja, arqueo en vivo y respaldos manuales.
+  - `CobrarView.jsx` + `CobrosExtrasTab.jsx` + `cobrar/` (`ExternosCobroTab.jsx`, `PagoFacturaLuzModal.jsx`): Cobros mensuales, externos, pagos de factura CRE y campañas de cobros extras con fondo independiente.
+  - `DeudoresView.jsx` + `deudores/` (`ConsolidadoDeudoresTab.jsx`, `HeredadosCiclosTab.jsx`): Central única de deudas consolidadas y gestión auditada de deudores heredados/de ciclo.
+  - `SociosView.jsx` + `socios/` (`GruposCobroTab.jsx`, `ExternosSociosTab.jsx`, `TraspasosTab.jsx`): Padrón oficial, puestos agrupados, aportantes externos e historial de traspasos.
+  - `AfiliacionesView.jsx`: Planes de afiliación y seguimiento de cuotas.
+  - `EgresosView.jsx` + `egresos/` (`GastosFijosPanel.jsx`, `GastosFijosModals.jsx`, `SueldoGuardiaTab.jsx`): Egresos por caja, facturas fijas mensuales (Luz/Agua/Guardia) y sueldo guardia.
+  - `InventarioView.jsx`: Registro de bienes del mercado y actas con fotografía.
+  - `RendicionView.jsx` + `rendicion/` (`InformeConsolidadoTab.jsx`, `MatrizPeriodoTab.jsx`, `MatrizDeudoresTab.jsx`): Informe consolidado de asamblea, matrices detalladas, impresión PDF y exportación Excel.
+  - `BitacoraView.jsx`: Registro privado de auditoría para `admin`.

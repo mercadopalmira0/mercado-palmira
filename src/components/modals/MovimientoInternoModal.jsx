@@ -1,6 +1,6 @@
 import React, { useState } from 'react'
 import { supabase } from '../../lib/supabase'
-import { ArrowRightLeft, ArrowDownRight, ArrowUpRight, CheckCircle2, AlertCircle, X, ShieldAlert, Coins, QrCode } from 'lucide-react'
+import { ArrowRightLeft, CheckCircle2, AlertCircle, X } from 'lucide-react'
 
 export default function MovimientoInternoModal({ isOpen, onClose, onMovementRegistered }) {
   const [tipo, setTipo] = useState('retiro_qr_a_efectivo')

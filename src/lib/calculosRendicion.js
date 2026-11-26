@@ -7,10 +7,10 @@
  * incluyendo fecha de corte de Asamblea, deudores heredados,
  * aportantes externos y cumplimiento completo de puestos y socios.
  */
-import { MESES, getNombreSocioCobro } from './formatters'
+import { MESES, getNombreSocioCobro, round2 } from './formatters'
 import { calcularDesgloseRubrosBase } from './calculosCobro'
 
-export const round2 = (n) => Math.round((Number(n || 0) + Number.EPSILON) * 100) / 100
+export { round2 }
 
 function parsePuestoSortKey(ident) {
   const raw = String(ident || '').replace(/^puesto\s+/i, '').trim()

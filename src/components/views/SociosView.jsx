@@ -3,10 +3,13 @@ import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
 import { registrarAuditoria, registrarEdicionAuditoria, registrarEliminacionAuditoria } from '../../lib/auditoria'
 import { calcularAutorellenoPersonalizado } from '../../lib/calculosCobro'
-import { formatResumenGrupo } from '../../lib/formatters'
+import { formatResumenGrupo, round2 } from '../../lib/formatters'
 import TraspasoPuestoModal from '../modals/TraspasoPuestoModal'
 import GrupoCobroModal from '../modals/GrupoCobroModal'
 import ConfirmMotivoModal from '../modals/ConfirmMotivoModal'
+import GruposCobroTab from './socios/GruposCobroTab'
+import TraspasosTab from './socios/TraspasosTab'
+import ExternosSociosTab from './socios/ExternosSociosTab'
 import {
   Users,
   Search,
@@ -25,9 +28,7 @@ import {
   PlusCircle,
   ArrowRightLeft,
   History,
-  ExternalLink,
   MoreVertical,
-  Unlink
 } from 'lucide-react'
 
 export default function SociosView() {
@@ -214,17 +215,17 @@ export default function SociosView() {
     if (field === 'g') setGuardiaPers(val)
     if (field === 'a') setAguaPers(val)
     if (field === 'l') setLuzPers(val)
-    const sum = Math.round(((parseFloat(nextG) || 0) + (parseFloat(nextA) || 0) + (parseFloat(nextL) || 0)) * 100) / 100
+    const sum = round2((parseFloat(nextG) || 0) + (parseFloat(nextA) || 0) + (parseFloat(nextL) || 0))
     setMontoFijoPers(String(sum))
   }
 
   const buildCustomTariffFields = () => {
     const isPers = tipo === 'fijo' && subtipoFijo === 'personalizado'
     return {
-      monto_fijo_personalizado: isPers ? Math.round((parseFloat(montoFijoPers) || 0) * 100) / 100 : null,
-      monto_guardia_personalizado: isPers ? Math.round((parseFloat(guardiaPers) || 0) * 100) / 100 : null,
-      monto_agua_personalizado: isPers ? Math.round((parseFloat(aguaPers) || 0) * 100) / 100 : null,
-      monto_luz_personalizado: isPers ? Math.round((parseFloat(luzPers) || 0) * 100) / 100 : null,
+      monto_fijo_personalizado: isPers ? round2(parseFloat(montoFijoPers) || 0) : null,
+      monto_guardia_personalizado: isPers ? round2(parseFloat(guardiaPers) || 0) : null,
+      monto_agua_personalizado: isPers ? round2(parseFloat(aguaPers) || 0) : null,
+      monto_luz_personalizado: isPers ? round2(parseFloat(luzPers) || 0) : null,
       detalle_tarifa_personalizada: isPers ? detallePers.trim() || null : null,
     }
   }
@@ -877,273 +878,57 @@ export default function SociosView() {
       )}
 
       {activeTab === 'grupos' ? (
-        <div className="space-y-4">
-          <div className="bg-purple-50 border border-purple-200 rounded-2xl p-4 text-xs text-purple-950 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-            <div>
-              <p className="font-bold">Grupos de Cobro ({gruposCobro.length})</p>
-              <p className="text-purple-800 mt-0.5">
-                Los puestos agrupados generan una sola boleta mensual a nombre del titular responsable, evitando cobros duplicados.
-              </p>
-            </div>
-            {isAdmin && (
-              <button
-                type="button"
-                onClick={() => {
-                  setEditingGrupo(null)
-                  setIsGrupoModalOpen(true)
-                }}
-                className="px-3.5 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-xl font-bold flex items-center gap-1.5 self-start sm:self-center"
-              >
-                <Layers className="w-3.5 h-3.5" />
-                <span>+ Crear Grupo</span>
-              </button>
-            )}
-          </div>
-
-          {gruposCobro.length === 0 ? (
-            <div className="bg-white rounded-2xl p-10 text-center border border-slate-200 text-xs text-slate-500 space-y-2">
-              <Layers className="w-10 h-10 mx-auto text-slate-300" />
-              <p>Aún no hay grupos de cobro creados. Usa "+ Crear Grupo" para agrupar 2 o más puestos.</p>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {gruposCobro.map(({ lider, miembros, resumen }) => (
-                <div key={lider.id} className="bg-white rounded-2xl p-4 border border-purple-200 shadow-sm space-y-3">
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="px-2.5 py-1 rounded-lg bg-purple-700 text-white text-xs font-black">
-                          {resumen.puestosLabel}
-                        </span>
-                        {lider.nombre_grupo && (
-                          <span className="px-2 py-0.5 rounded bg-purple-100 text-purple-900 text-xs font-bold">
-                            {lider.nombre_grupo}
-                          </span>
-                        )}
-                      </div>
-                      <h4 className="font-extrabold text-sm sm:text-base text-slate-900 mt-1.5">
-                        Titular: {lider.socios?.nombre || 'Sin socio'}
-                      </h4>
-                    </div>
-
-                    {isAdmin && (
-                      <div className="flex items-center gap-1 shrink-0">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setEditingGrupo({ lider, miembros })
-                            setIsGrupoModalOpen(true)
-                          }}
-                          className="px-2.5 py-1.5 rounded-lg bg-blue-50 text-blue-700 hover:bg-blue-100 text-xs font-bold flex items-center gap-1"
-                        >
-                          <Edit2 className="w-3.5 h-3.5" />
-                          <span>Editar</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setConfirmState({
-                              open: true,
-                              tipo: 'edicion',
-                              entity: 'desagrupar',
-                              target: { lider, miembros },
-                              advertencia: 'Todos los puestos del grupo volverán a cobrarse de forma individual en los próximos meses.',
-                            })
-                          }
-                          className="px-2.5 py-1.5 rounded-lg bg-red-50 text-red-700 hover:bg-red-100 text-xs font-bold flex items-center gap-1"
-                        >
-                          <Unlink className="w-3.5 h-3.5" />
-                          <span>Desagrupar</span>
-                        </button>
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="bg-slate-50 rounded-xl p-3 border border-slate-100 space-y-1.5 text-xs">
-                    <span className="text-[10px] font-bold uppercase text-slate-400 block">
-                      Integrantes del Grupo ({1 + miembros.length} puestos)
-                    </span>
-                    <div className="flex flex-wrap gap-1.5">
-                      <span className="px-2 py-1 rounded-lg bg-amber-100 text-amber-900 border border-amber-300 font-bold text-[11px]">
-                        ★ {lider.numero_identificador} • {lider.socios?.nombre}
-                      </span>
-                      {miembros.map((m) => (
-                        <span
-                          key={m.id}
-                          className="px-2 py-1 rounded-lg bg-white text-slate-700 border border-slate-200 font-medium text-[11px]"
-                        >
-                          {m.numero_identificador} • {m.socios?.nombre}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div className="pt-2 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2 text-xs">
-                    <span className="text-slate-600">
-                      Modalidad:{' '}
-                      <strong className="text-slate-900 capitalize">
-                        {lider.tipo === 'variable'
-                          ? `Variable (Tarifador ${lider.codigo_tarifador || 'S/C'})`
-                          : lider.subtipo_fijo === 'personalizado'
-                          ? `Personalizado (${parseFloat(lider.monto_fijo_personalizado || 0).toFixed(2)} Bs)`
-                          : `Fijo (${(lider.subtipo_fijo || 'puesto_abierto').replace('_', ' ')})`}
-                      </strong>
-                    </span>
-                    <span className="text-[11px] font-bold text-purple-700">1 boleta mensual</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
+        <GruposCobroTab
+          gruposCobro={gruposCobro}
+          isAdmin={isAdmin}
+          onCreateGrupo={() => {
+            setEditingGrupo(null)
+            setIsGrupoModalOpen(true)
+          }}
+          onEditGrupo={({ lider, miembros }) => {
+            setEditingGrupo({ lider, miembros })
+            setIsGrupoModalOpen(true)
+          }}
+          onDesagrupar={({ lider, miembros }) =>
+            setConfirmState({
+              open: true,
+              tipo: 'edicion',
+              entity: 'desagrupar',
+              target: { lider, miembros },
+              advertencia: 'Todos los puestos del grupo volverán a cobrarse de forma individual en los próximos meses.',
+            })
+          }
+        />
       ) : activeTab === 'traspasos' ? (
-        <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm">
-          <div className="px-5 py-3.5 bg-slate-50 border-b border-slate-200">
-            <span className="text-xs font-bold uppercase tracking-wider text-slate-700">
-              Registro Histórico de Traspasos / Venta de Puestos ({traspasos.length})
-            </span>
-          </div>
-
-          {traspasos.length === 0 ? (
-            <div className="p-10 text-center text-xs text-slate-500">
-              No se han registrado traspasos de puestos todavía.
-            </div>
-          ) : (
-            <div className="divide-y divide-slate-100">
-              {traspasos.map((tr) => (
-                <div key={tr.id} className="p-4 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                  <div className="space-y-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="px-2 py-0.5 rounded bg-slate-900 text-white font-bold">{tr.puesto_referencia}</span>
-                      <span className="font-bold text-red-700">{tr.nombre_socio_anterior}</span>
-                      <span className="text-slate-400">➔</span>
-                      <span className="font-bold text-emerald-700">{tr.nombre_socio_nuevo}</span>
-                      {tr.incluye_afiliacion_nueva && (
-                        <span className="px-2 py-0.5 rounded bg-blue-100 text-blue-800 text-[10px] font-bold">
-                          Con Afiliación Nueva
-                        </span>
-                      )}
-                    </div>
-                    {tr.observaciones && <p className="text-slate-600">{tr.observaciones}</p>}
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <span className="text-slate-500 font-mono">{tr.fecha_traspaso}</span>
-                    {tr.documento_respaldo_url && (
-                      <a
-                        href={tr.documento_respaldo_url}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="px-2.5 py-1 bg-blue-50 text-blue-600 rounded-lg font-semibold inline-flex items-center gap-1"
-                      >
-                        <ExternalLink className="w-3.5 h-3.5" />
-                        <span>Acta</span>
-                      </a>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
+        <TraspasosTab traspasos={traspasos} />
       ) : activeTab === 'externos' ? (
-        <div className="space-y-4">
-          <div className="bg-indigo-50 border border-indigo-200 rounded-2xl p-4 text-xs text-indigo-900">
-            <strong>Aportantes Externos (No Socios):</strong> Personas fuera de la asociación que aportan únicamente para Guardia y Agua.
-          </div>
-
-          <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-sm">
-            <div className="relative">
-              <Search className="w-4 h-4 absolute left-3.5 top-3 text-slate-400" />
-              <input
-                type="text"
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                placeholder="Buscar externo por nombre, ubicación o teléfono..."
-                className="w-full pl-10 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none"
-              />
-            </div>
-          </div>
-
-          {filteredExternos.length === 0 ? (
-            <div className="bg-white rounded-2xl p-10 text-center border border-slate-200 text-xs text-slate-500">
-              No hay aportantes externos registrados aún.
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {filteredExternos.map((ext) => (
-                <div
-                  key={ext.id}
-                  className={`bg-white rounded-2xl p-4 border shadow-sm space-y-2 ${
-                    ext.activo ? 'border-slate-200' : 'border-slate-200 bg-slate-50 opacity-70'
-                  }`}
-                >
-                  <div className="flex items-start justify-between">
-                    <div>
-                      <h4 className="font-bold text-sm text-slate-900">{ext.nombre_completo}</h4>
-                      {ext.telefono && (
-                        <p className="text-xs text-slate-500 flex items-center gap-1 mt-0.5">
-                          <Phone className="w-3 h-3" />
-                          <span>{ext.telefono}</span>
-                        </p>
-                      )}
-                    </div>
-                    {isAdmin && (
-                      <div className="flex items-center gap-1">
-                        <button
-                          type="button"
-                          onClick={() => openEditExtModal(ext)}
-                          title="Editar externo"
-                          className="p-1.5 rounded-lg text-blue-600 hover:bg-blue-50"
-                        >
-                          <Edit2 className="w-4 h-4" />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => requestDeleteExterno(ext)}
-                          title="Eliminar externo"
-                          className="p-1.5 rounded-lg text-red-600 hover:bg-red-50"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="bg-indigo-50/60 p-2.5 rounded-xl border border-indigo-100 text-xs space-y-1">
-                    <div className="flex justify-between items-center">
-                      <span className="text-indigo-900 font-medium">Aporte Mensual Base:</span>
-                      <span className="font-extrabold text-indigo-700">
-                        {parseFloat(ext.monto_mensual_sugerido || 0).toFixed(2)} Bs/mes
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-2 text-[11px] text-indigo-800">
-                      <span className="px-1.5 py-0.5 bg-white rounded border border-indigo-200">
-                        Guardia: {(parseFloat(ext.monto_guardia_base ?? 40) || 0).toFixed(2)} Bs
-                      </span>
-                      <span className="px-1.5 py-0.5 bg-white rounded border border-indigo-200">
-                        Agua: {(parseFloat(ext.monto_agua_base ?? 10) || 0).toFixed(2)} Bs
-                      </span>
-                    </div>
-                  </div>
-
-                  {ext.referencia_ubicacion && (
-                    <p className="text-xs text-slate-600">
-                      <strong>Ubicación:</strong> {ext.referencia_ubicacion}
-                    </p>
-                  )}
-                  {ext.observaciones && <p className="text-[11px] text-slate-500 italic">{ext.observaciones}</p>}
-
-                  <div className="pt-2 border-t border-slate-100 flex justify-between text-[11px]">
-                    <span className={ext.activo ? 'text-emerald-600 font-bold' : 'text-slate-400'}>
-                      {ext.activo ? 'Activo' : 'Inactivo'}
-                    </span>
-                    <span className="text-slate-400">Solo Guardia y Agua</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
+        <ExternosSociosTab
+          searchTerm={searchTerm}
+          setSearchTerm={setSearchTerm}
+          filteredExternos={filteredExternos}
+          isAdmin={isAdmin}
+          openEditExtModal={openEditExtModal}
+          requestDeleteExterno={requestDeleteExterno}
+          isExtModalOpen={isExtModalOpen}
+          setIsExtModalOpen={setIsExtModalOpen}
+          editingExtId={editingExtId}
+          handleSaveExterno={handleSaveExterno}
+          extNombre={extNombre}
+          setExtNombre={setExtNombre}
+          extTelefono={extTelefono}
+          setExtTelefono={setExtTelefono}
+          extGuardiaBase={extGuardiaBase}
+          setExtGuardiaBase={setExtGuardiaBase}
+          extAguaBase={extAguaBase}
+          setExtAguaBase={setExtAguaBase}
+          extUbicacion={extUbicacion}
+          setExtUbicacion={setExtUbicacion}
+          extObs={extObs}
+          setExtObs={setExtObs}
+          extActivo={extActivo}
+          setExtActivo={setExtActivo}
+          savingExt={savingExt}
+        />
       ) : (
         <>
           <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-sm flex flex-col sm:flex-row items-center gap-3">
@@ -1704,137 +1489,6 @@ export default function SociosView() {
                 <span>{saving ? 'Guardando...' : isEditing ? 'Actualizar Socio' : 'Guardar'}</span>
               </button>
             </div>
-          </div>
-        </div>
-      )}
-
-      {/* Modal Externo */}
-      {isExtModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-2 sm:p-4 bg-black/60 backdrop-blur-sm">
-          <div className="w-full max-w-md max-h-[88dvh] sm:max-h-[90dvh] flex flex-col overflow-hidden rounded-2xl bg-white shadow-2xl border border-slate-200">
-            <div className="shrink-0 bg-slate-900 px-5 py-3.5 text-white flex items-center justify-between">
-              <div className="min-w-0">
-                <h3 className="font-bold text-sm sm:text-base truncate">
-                  {editingExtId ? 'Editar Aportante Externo (Auditado)' : 'Registrar Aportante Externo'}
-                </h3>
-                <p className="text-[11px] sm:text-xs text-slate-400 truncate">Solo aporte de Guardia y Agua</p>
-              </div>
-              <button type="button" onClick={() => setIsExtModalOpen(false)} className="p-1.5 text-slate-300 hover:text-white shrink-0">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <form onSubmit={handleSaveExterno} className="flex flex-col flex-1 min-h-0 overflow-hidden">
-              <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-4 sm:p-6 space-y-4">
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  Nombre Completo <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  required
-                  value={extNombre}
-                  onChange={(e) => setExtNombre(e.target.value)}
-                  className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-300 rounded-xl"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">Teléfono</label>
-                <input
-                  type="text"
-                  value={extTelefono}
-                  onChange={(e) => setExtTelefono(e.target.value)}
-                  className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-300 rounded-xl"
-                />
-              </div>
-
-              <div className="p-3 bg-indigo-50 border border-indigo-200 rounded-xl space-y-2">
-                <div className="flex items-center justify-between text-xs">
-                  <span className="font-bold text-indigo-950">Desglose Mensual Base (Bs)</span>
-                  <span className="font-extrabold text-indigo-700">
-                    Total: {((parseFloat(extGuardiaBase) || 0) + (parseFloat(extAguaBase) || 0)).toFixed(2)} Bs/mes
-                  </span>
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-[11px] font-semibold text-indigo-900 mb-1">
-                      Guardia (Bs) <span className="text-red-500">*</span>
-                    </label>
-                    <input
-                      type="number"
-                      inputMode="decimal"
-                      step="0.01"
-                      min="0"
-                      required
-                      value={extGuardiaBase}
-                      onChange={(e) => setExtGuardiaBase(e.target.value)}
-                      className="w-full px-3 py-1.5 text-sm bg-white border border-indigo-300 rounded-xl font-bold"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[11px] font-semibold text-indigo-900 mb-1">
-                      Agua (Bs) <span className="text-red-500">*</span>
-                    </label>
-                    <input
-                      type="number"
-                      inputMode="decimal"
-                      step="0.01"
-                      min="0"
-                      required
-                      value={extAguaBase}
-                      onChange={(e) => setExtAguaBase(e.target.value)}
-                      className="w-full px-3 py-1.5 text-sm bg-white border border-indigo-300 rounded-xl font-bold"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">Referencia / Ubicación</label>
-                <input
-                  type="text"
-                  value={extUbicacion}
-                  onChange={(e) => setExtUbicacion(e.target.value)}
-                  className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-300 rounded-xl"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">Observaciones</label>
-                <input
-                  type="text"
-                  value={extObs}
-                  onChange={(e) => setExtObs(e.target.value)}
-                  className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-300 rounded-xl"
-                />
-              </div>
-
-              <label className="flex items-center gap-2 text-xs font-medium text-slate-700 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={extActivo}
-                  onChange={(e) => setExtActivo(e.target.checked)}
-                  className="w-4 h-4 text-indigo-600 rounded"
-                />
-                <span>Aportante Activo</span>
-              </label>
-
-              </div>
-
-              <div className="shrink-0 border-t border-slate-200 bg-white px-4 py-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] flex items-center justify-end gap-2">
-                <button type="button" onClick={() => setIsExtModalOpen(false)} className="px-4 py-2 text-xs font-semibold text-slate-600">
-                  Cancelar
-                </button>
-                <button
-                  type="submit"
-                  disabled={savingExt}
-                  className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold"
-                >
-                  {savingExt ? 'Guardando...' : editingExtId ? 'Actualizar Externo' : 'Guardar Externo'}
-                </button>
-              </div>
-            </form>
           </div>
         </div>
       )}

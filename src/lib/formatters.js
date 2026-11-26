@@ -15,6 +15,21 @@ export const MESES = [
 ]
 
 /**
+ * Redondeo monetario seguro a 2 decimales.
+ */
+export const round2 = (n) => Math.round((Number(n || 0) + Number.EPSILON) * 100) / 100
+
+/**
+ * Formatea una fecha ISO/YYYY-MM-DD como DD/MM/YYYY.
+ */
+export function formatFechaDMY(fechaStr) {
+  if (!fechaStr) return ''
+  const [y, m, d] = String(fechaStr).split('T')[0].split('-')
+  if (y && m && d) return `${d}/${m}/${y}`
+  return fechaStr
+}
+
+/**
  * Devuelve la fecha local en formato YYYY-MM-DD (sin desfase UTC).
  */
 export function getLocalDateStr(date = new Date()) {

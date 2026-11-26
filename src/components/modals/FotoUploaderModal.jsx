@@ -1,6 +1,6 @@
 import React, { useState } from 'react'
 import { uploadPhotoToDrive, compressImage } from '../../lib/driveUpload'
-import { Camera, Upload, Link, CheckCircle2, AlertCircle, X, RefreshCw, FileText, ExternalLink } from 'lucide-react'
+import { Camera, Link, CheckCircle2, AlertCircle, X, RefreshCw, ExternalLink } from 'lucide-react'
 
 export default function FotoUploaderModal({
   isOpen,

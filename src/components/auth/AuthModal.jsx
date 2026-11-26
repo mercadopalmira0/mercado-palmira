@@ -1,6 +1,6 @@
 import React, { useState } from 'react'
 import { useAuth } from '../../context/AuthContext'
-import { ShieldCheck, Mail, Lock, User, Briefcase, X, AlertCircle } from 'lucide-react'
+import { ShieldCheck, Mail, Lock, User, X, AlertCircle } from 'lucide-react'
 
 export default function AuthModal({ isOpen, onClose }) {
   const { signIn, signUp, user, profile, signOut } = useAuth()

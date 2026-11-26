@@ -3,15 +3,7 @@
  * Secretaría de Hacienda - Mercado Palmira
  */
 import * as XLSX from 'xlsx'
-import { getNombreSocioCobro } from './formatters'
-import { round2 } from './calculosRendicion'
-
-function formatFechaDMY(fechaStr) {
-  if (!fechaStr) return ''
-  const [y, m, d] = String(fechaStr).split('T')[0].split('-')
-  if (y && m && d) return `${d}/${m}/${y}`
-  return fechaStr
-}
+import { getNombreSocioCobro, formatFechaDMY, round2 } from './formatters'
 
 /**
  * Aplica formato numérico `#,##0.00` y redondeo limpio a las columnas monetarias indicadas.

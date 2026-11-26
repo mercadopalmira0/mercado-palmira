@@ -1,5 +1,5 @@
 import React from 'react'
-import { Store, ShieldCheck, User, LogIn, LogOut, Eye } from 'lucide-react'
+import { Store, ShieldCheck, User, LogIn } from 'lucide-react'
 import { useAuth } from '../../context/AuthContext'
 
 export default function Header({ activeTabName, onOpenAuth }) {

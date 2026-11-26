@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
 import { registrarAuditoria } from '../../lib/auditoria'
-import { Settings, CheckCircle2, AlertCircle, X, ShieldAlert, Zap, Clock, UserPlus, Shield } from 'lucide-react'
+import { Settings, CheckCircle2, AlertCircle, X, Zap, Clock, UserPlus, Shield } from 'lucide-react'
 
 export default function TarifasModal({ isOpen, onClose, onUpdated }) {
   const { user } = useAuth()

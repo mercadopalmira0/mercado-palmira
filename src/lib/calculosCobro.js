@@ -2,6 +2,7 @@
  * Reglas de Cálculo de Cobros, Tarifas, Luz, Multas y Desglose Interno (Guardia / Agua / Grupo Luz)
  * Secretaría de Hacienda - Mercado Palmira
  */
+import { round2 } from './formatters'
 
 export function roundLuz(monto, tipoRedondeo = 'arriba_0_50') {
   if (!monto || monto <= 0) return 0
@@ -93,7 +94,7 @@ export function calcularMultaMora({
  * - Si total < 45: se reparte proporcionalmente (40:5) con 2 decimales exactos.
  */
 export function calcularAutorellenoPersonalizado(total = 0) {
-  const totalNum = Math.round((parseFloat(total) || 0) * 100) / 100
+  const totalNum = round2(parseFloat(total) || 0)
   if (totalNum <= 0) {
     return { montoGuardia: 0, montoAgua: 0, montoLuzGrupo: 0 }
   }
@@ -101,11 +102,11 @@ export function calcularAutorellenoPersonalizado(total = 0) {
     return {
       montoGuardia: 40,
       montoAgua: 5,
-      montoLuzGrupo: Math.round((totalNum - 45) * 100) / 100,
+      montoLuzGrupo: round2(totalNum - 45),
     }
   }
-  const guardia = Math.round(totalNum * (40 / 45) * 100) / 100
-  const agua = Math.round((totalNum - guardia) * 100) / 100
+  const guardia = round2(totalNum * (40 / 45))
+  const agua = round2(totalNum - guardia)
   return {
     montoGuardia: guardia,
     montoAgua: agua,
@@ -132,7 +133,7 @@ export function calcularDesgloseRubrosBase({
   const montoGuardia = 40 * puestosEfectivos
   const montoAgua = 5 * puestosEfectivos
   const restoFijo = Math.max(0, baseNum - montoGuardia - montoAgua)
-  const montoLuzGrupo = Math.round((restoFijo + luzNum) * 100) / 100
+  const montoLuzGrupo = round2(restoFijo + luzNum)
 
   return {
     montoGuardia,
@@ -227,7 +228,7 @@ export function calcularDesgloseCobro({
       montoAgua = parseFloat(montoAguaPersonalizado) || 0
       montoLuzGrupo = parseFloat(montoLuzPersonalizado) || 0
       if (montoBase <= 0) {
-        montoBase = Math.round((montoGuardia + montoAgua + montoLuzGrupo) * 100) / 100
+        montoBase = round2(montoGuardia + montoAgua + montoLuzGrupo)
       }
     } else {
       const autoPers = calcularAutorellenoPersonalizado(montoBase)
@@ -248,8 +249,8 @@ export function calcularDesgloseCobro({
   }
 
   const subtotalRubros = esMontoEditado
-    ? Math.round((montoGuardia + montoAgua + montoLuzGrupo) * 100) / 100
-    : Math.round((montoBase + montoLuzRedondeado) * 100) / 100
+    ? round2(montoGuardia + montoAgua + montoLuzGrupo)
+    : round2(montoBase + montoLuzRedondeado)
 
   const { diasRetraso, multaCalculada, motivoExencion } = calcularMultaMora({
     mes,
@@ -270,7 +271,7 @@ export function calcularDesgloseCobro({
   let porcentajePerdonazo = 0
   if (perdonazoActivo && multaDespuesManual > 0 && !yaPagadoCompletoSinPerdonazo) {
     porcentajePerdonazo = parseFloat(perdonazoActivo.porcentaje_descuento) || 0
-    descuentoPerdonazo = Math.round(multaDespuesManual * (porcentajePerdonazo / 100) * 100) / 100
+    descuentoPerdonazo = round2(multaDespuesManual * (porcentajePerdonazo / 100))
   }
 
   const multaNeta = Math.max(0, multaDespuesManual - descuentoPerdonazo)
