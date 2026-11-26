@@ -92,6 +92,10 @@ export default function RendicionView() {
         { data: unidadesData },
         { data: egresosData },
         { data: movimientosData },
+        { data: extrasCampanasData },
+        { data: extrasCuotasData },
+        { data: extrasPagosData },
+        { data: extrasEgresosData },
       ] = await Promise.all([
         supabase.from('periodos_mensuales').select('*'),
         supabase.from('ciclos_hacienda').select('*').order('created_at', { ascending: false }),
@@ -151,6 +155,18 @@ export default function RendicionView() {
         `),
         supabase.from('egresos').select('*'),
         supabase.from('movimientos_internos').select('*'),
+        supabase.from('cobros_extras_campanas').select('*').neq('estado', 'anulada').order('created_at', { ascending: false }),
+        supabase
+          .from('cobros_extras_cuotas')
+          .select(`
+            id, campana_id, unidad_id, externo_id, nombre_titular, puesto_referencia, cantidad_puestos, monto_esperado, monto_pagado, estado,
+            cobros_extras_campanas (id, nombre, estado),
+            unidades_cobro (id, numero_identificador, socio_responsable_id, socios (id, nombre, telefono)),
+            aportantes_externos (id, nombre_completo, telefono)
+          `)
+          .in('estado', ['pendiente', 'parcial']),
+        supabase.from('pagos_cobros_extras').select('*').eq('anulado', false),
+        supabase.from('egresos_cobros_extras').select('*').eq('anulado', false),
       ])
 
       const periodosEnRango = (periodosData || []).filter((p) => {
@@ -183,6 +199,10 @@ export default function RendicionView() {
         deudoresCiclos: deudoresCiclosData || [],
         unidadesCobro: unidadesData || [],
         aportantesExternos: aportantesExternosData || [],
+        cobrosExtrasCampanas: extrasCampanasData || [],
+        cobrosExtrasCuotas: extrasCuotasData || [],
+        pagosCobrosExtras: extrasPagosData || [],
+        egresosCobrosExtras: extrasEgresosData || [],
       })
 
       setConsolidado(resultado)
@@ -1130,6 +1150,69 @@ export default function RendicionView() {
             )}
           </div>
 
+          {/* CUADRO 4 (Informativo): Cobros Extras / Campañas (Fondo Independiente) */}
+          {(consolidado.resumenCobrosExtras || []).length > 0 && (
+            <div className="space-y-2.5 pt-4">
+              <h3 className="text-sm font-bold uppercase tracking-wider text-amber-800 flex items-center gap-1.5 border-b pb-1">
+                <ClipboardCheck className="w-4 h-4 text-amber-600" />
+                4. Resumen de Cobros Extras / Campañas (Fondo Independiente)
+              </h3>
+              <p className="text-[11px] text-slate-500">
+                Los fondos de campañas extraordinarias se administran de forma independiente. Solo ingresan a Caja Servicios o Caja Afiliaciones si se transfiere un sobrante al cierre.
+              </p>
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs text-left border-collapse border border-slate-200">
+                  <thead>
+                    <tr className="bg-amber-50 text-amber-950 font-bold border-b border-slate-200">
+                      <th className="p-2 border-r border-slate-200">Campaña</th>
+                      <th className="p-2 border-r border-slate-200">Estado</th>
+                      <th className="p-2 border-r border-slate-200 text-right">Recaudado (Bs)</th>
+                      <th className="p-2 border-r border-slate-200 text-right">Gastado (Bs)</th>
+                      <th className="p-2 border-r border-slate-200 text-right">Saldo Sobrante (Bs)</th>
+                      <th className="p-2">Observación / Traspaso</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
+                    {consolidado.resumenCobrosExtras.map((ce) => (
+                      <tr key={ce.id} className="hover:bg-slate-50">
+                        <td className="p-2 border-r border-slate-200 font-bold text-slate-900">{ce.nombre}</td>
+                        <td className="p-2 border-r border-slate-200 uppercase text-[10px] font-bold">
+                          <span
+                            className={`px-2 py-0.5 rounded ${
+                              ce.estado === 'cerrada'
+                                ? 'bg-slate-200 text-slate-700'
+                                : 'bg-emerald-100 text-emerald-800'
+                            }`}
+                          >
+                            {ce.estado === 'cerrada' ? 'Cerrada' : 'Abierta'}
+                          </span>
+                        </td>
+                        <td className="p-2 border-r border-slate-200 text-right font-mono">
+                          {ce.recaudado.toFixed(2)}
+                        </td>
+                        <td className="p-2 border-r border-slate-200 text-right font-mono text-red-700">
+                          {ce.gastado.toFixed(2)}
+                        </td>
+                        <td className="p-2 border-r border-slate-200 text-right font-mono font-bold text-emerald-700">
+                          {ce.saldoSobrante.toFixed(2)}
+                        </td>
+                        <td className="p-2 text-[11px] text-slate-600">
+                          {ce.estado === 'cerrada'
+                            ? ce.cajaDestinoSobrante
+                              ? `Sobrante transferido (${ce.sobranteTransferido.toFixed(2)} Bs) a Caja ${
+                                  ce.cajaDestinoSobrante === 'servicios' ? 'Servicios' : 'Afiliaciones'
+                                }`
+                              : 'Cierre informativo (sin traspaso)'
+                            : 'Campaña en curso (fondo independiente)'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
           {/* Pie de Firmas */}
           <div className="pt-16 pb-4 border-t border-slate-300 grid grid-cols-3 gap-8 text-center text-xs">
             <div className="border-t border-slate-900 pt-2 space-y-0.5">
@@ -1491,6 +1574,9 @@ export default function RendicionView() {
             }
             if (origen === 'Externo') {
               return 'bg-indigo-100 text-indigo-800 border-indigo-200'
+            }
+            if (origen === 'Cobro Extra') {
+              return 'bg-purple-100 text-purple-800 border-purple-200'
             }
             return 'bg-blue-100 text-blue-800 border-blue-200'
           }

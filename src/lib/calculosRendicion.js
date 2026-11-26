@@ -265,6 +265,7 @@ export function buildMatrizDeudores({
   cobrosExternos,
   deudoresCiclos,
   afiliaciones,
+  cobrosExtrasCuotas = [],
   fechaInicioPeriodo = null,
   fechaFinPeriodo = null,
   origenCobroServicioDefault = 'Mes actual',
@@ -429,6 +430,52 @@ export function buildMatrizDeudores({
     })
   })
 
+  // 5. cobros_extras_cuotas con saldo pendiente (campañas no anuladas)
+  ;(cobrosExtrasCuotas || []).forEach((cu) => {
+    if (!['pendiente', 'parcial'].includes(cu.estado)) return
+    if (cu.cobros_extras_campanas?.estado === 'anulada') return
+
+    const esperado = round2(parseFloat(cu.monto_esperado) || 0)
+    const abonado = round2(parseFloat(cu.monto_pagado) || 0)
+    const saldoPendiente = round2(Math.max(0, esperado - abonado))
+    if (saldoPendiente <= 0) return
+
+    const socioId =
+      cu.unidades_cobro?.socio_responsable_id || cu.unidades_cobro?.socios?.id || null
+    const nombre =
+      cu.nombre_titular ||
+      cu.unidades_cobro?.socios?.nombre ||
+      cu.aportantes_externos?.nombre_completo ||
+      'Sin nombre'
+    const telefono =
+      cu.unidades_cobro?.socios?.telefono || cu.aportantes_externos?.telefono || ''
+    const campanaNombre = cu.cobros_extras_campanas?.nombre || ''
+    const detalle = campanaNombre ? `Cobro Extra — ${campanaNombre}` : 'Cobro Extra'
+
+    items.push({
+      id: `cext-${cu.id}`,
+      recordId: cu.id,
+      fuente: 'cobro_extra',
+      groupKey: socioId
+        ? `socio:${socioId}`
+        : cu.externo_id
+        ? `ext:${cu.externo_id}`
+        : `nombre:${normalizarNombrePersona(nombre)}`,
+      tipoCategoria: 'periodo_actual',
+      origen: 'Cobro Extra',
+      nombre,
+      telefono,
+      puesto: cu.puesto_referencia || '-',
+      detalle,
+      montoEsperado: esperado,
+      abonado,
+      saldoPendiente,
+      multa: 0,
+      capitalPeriodo: saldoPendiente,
+      capitalAnterior: 0,
+    })
+  })
+
   // Agrupar 1 fila por deudor
   const mapa = new Map()
   items.forEach((it) => {
@@ -445,10 +492,12 @@ export function buildMatrizDeudores({
         deudaMensualYExternos: 0,
         deudaHeredada: 0,
         deudaAfiliacion: 0,
+        deudaCobroExtra: 0,
         tieneMensual: false,
         tieneExterno: false,
         tieneHeredado: false,
         tieneAfiliacion: false,
+        tieneCobroExtra: false,
         cantidadItems: 0,
         items: [],
       })
@@ -474,6 +523,9 @@ export function buildMatrizDeudores({
     } else if (it.fuente === 'afiliacion') {
       g.tieneAfiliacion = true
       g.deudaAfiliacion = round2(g.deudaAfiliacion + it.saldoPendiente)
+    } else if (it.fuente === 'cobro_extra') {
+      g.tieneCobroExtra = true
+      g.deudaCobroExtra = round2(g.deudaCobroExtra + it.saldoPendiente)
     }
     g.cantidadItems += 1
     g.items.push(it)
@@ -492,10 +544,12 @@ export function buildMatrizDeudores({
       deudaMensualYExternos: g.deudaMensualYExternos,
       deudaHeredada: g.deudaHeredada,
       deudaAfiliacion: g.deudaAfiliacion,
+      deudaCobroExtra: g.deudaCobroExtra,
       tieneMensual: g.tieneMensual,
       tieneExterno: g.tieneExterno,
       tieneHeredado: g.tieneHeredado,
       tieneAfiliacion: g.tieneAfiliacion,
+      tieneCobroExtra: g.tieneCobroExtra,
       cantidadItems: g.cantidadItems,
       tienePeriodoActual: g.deudaPeriodoActual > 0 || g.multas > 0,
       tieneDeudaAnterior: g.deudaAnterior > 0,
@@ -519,6 +573,7 @@ export function buildMatrizDeudores({
       ),
       totalHeredados: round2(resumenPorDeudor.reduce((s, r) => s + r.deudaHeredada, 0)),
       totalAfiliaciones: round2(resumenPorDeudor.reduce((s, r) => s + r.deudaAfiliacion, 0)),
+      totalCobrosExtras: round2(resumenPorDeudor.reduce((s, r) => s + r.deudaCobroExtra, 0)),
       cantidadDeudores: resumenPorDeudor.length,
       cantidadItems: detalleDeudas.length,
       totalEsperadoDetalle: round2(detalleDeudas.reduce((s, d) => s + d.montoEsperado, 0)),
@@ -595,6 +650,10 @@ export function calcularConsolidadoRendicion({
   deudoresCiclos = [],
   unidadesCobro = [],
   aportantesExternos = [],
+  cobrosExtrasCampanas = [],
+  cobrosExtrasCuotas = [],
+  pagosCobrosExtras = [],
+  egresosCobrosExtras = [],
 }) {
   // 1. Fechas límite del rango de periodos y de corte de caja para Asamblea
   const fechaInicioPeriodo = new Date(anioInicio, mesInicio - 1, 1, 0, 0, 0, 0)
@@ -1164,9 +1223,59 @@ export function calcularConsolidadoRendicion({
     cobrosExternos,
     deudoresCiclos,
     afiliaciones,
+    cobrosExtrasCuotas,
     fechaInicioPeriodo,
     fechaFinPeriodo,
   })
+
+  const resumenCobrosExtras = (cobrosExtrasCampanas || [])
+    .filter((camp) => {
+      if (camp.estado === 'anulada') return false
+      if (camp.estado === 'abierta') return true
+      const fIni = parseFechaStart(camp.fecha_inicio)
+      const fCie = parseFechaStart(camp.fecha_cierre)
+      return (
+        (fIni && fIni >= fechaInicioPeriodo && fIni <= fechaLimiteFin) ||
+        (fCie && fCie >= fechaLimiteInicio && fCie <= fechaLimiteFin)
+      )
+    })
+    .map((camp) => {
+      const pagosCamp = (pagosCobrosExtras || []).filter(
+        (p) => !p.anulado && p.campana_id === camp.id
+      )
+      const egresosCamp = (egresosCobrosExtras || []).filter(
+        (e) => !e.anulado && e.campana_id === camp.id
+      )
+      const recaudadoEf = round2(
+        pagosCamp
+          .filter((p) => p.metodo_pago === 'efectivo')
+          .reduce((s, p) => s + (parseFloat(p.monto) || 0), 0)
+      )
+      const recaudadoQr = round2(
+        pagosCamp
+          .filter((p) => p.metodo_pago === 'qr')
+          .reduce((s, p) => s + (parseFloat(p.monto) || 0), 0)
+      )
+      const recaudado = round2(recaudadoEf + recaudadoQr)
+      const gastado = round2(
+        egresosCamp.reduce((s, e) => s + (parseFloat(e.monto) || 0), 0)
+      )
+      const saldoSobrante = round2(recaudado - gastado)
+      return {
+        id: camp.id,
+        nombre: camp.nombre,
+        estado: camp.estado,
+        fechaInicio: camp.fecha_inicio,
+        fechaCierre: camp.fecha_cierre,
+        recaudadoEf,
+        recaudadoQr,
+        recaudado,
+        gastado,
+        saldoSobrante,
+        sobranteTransferido: round2(parseFloat(camp.sobrante_transferido) || 0),
+        cajaDestinoSobrante: camp.caja_destino_sobrante || null,
+      }
+    })
 
   return {
     fechaInicio: fechaLimiteInicio,
@@ -1267,5 +1376,6 @@ export function calcularConsolidadoRendicion({
     },
     matrizPeriodo,
     matrizDeudores,
+    resumenCobrosExtras,
   }
 }

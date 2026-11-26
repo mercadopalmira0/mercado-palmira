@@ -248,4 +248,83 @@ DO $$ DECLARE c RECORD; BEGIN FOR c IN SELECT conname FROM pg_constraint WHERE c
 -- Recargar caché de Supabase
 NOTIFY pgrst, 'reload schema';
 
+-- ============================================================
+-- MÓDULO: COBROS EXTRAS / CAMPAÑAS (FONDO INDEPENDIENTE)
+-- ============================================================
+
+-- 1. Campañas de Cobros Extras (ej. Aguinaldo Guardia 2026, Aniversario 2026)
+CREATE TABLE IF NOT EXISTS cobros_extras_campanas (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  nombre TEXT NOT NULL,
+  descripcion TEXT,
+  monto_por_puesto NUMERIC(10,2) NOT NULL,
+  incluye_ambulantes BOOLEAN NOT NULL DEFAULT FALSE,
+  incluye_externos BOOLEAN NOT NULL DEFAULT FALSE,
+  fecha_inicio DATE NOT NULL DEFAULT CURRENT_DATE,
+  fecha_limite DATE,
+  estado TEXT NOT NULL DEFAULT 'abierta', -- 'abierta' | 'cerrada' | 'anulada'
+  sobrante_transferido NUMERIC(10,2) DEFAULT 0,
+  caja_destino_sobrante TEXT, -- 'servicios' | 'afiliaciones' | NULL
+  fecha_cierre DATE,
+  motivo_anulacion TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- 2. Cuotas generadas por puesto/unidad o externo dentro de cada campaña
+CREATE TABLE IF NOT EXISTS cobros_extras_cuotas (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  campana_id UUID NOT NULL REFERENCES cobros_extras_campanas(id) ON DELETE CASCADE,
+  unidad_id UUID REFERENCES unidades_cobro(id) ON DELETE SET NULL,
+  externo_id UUID REFERENCES aportantes_externos(id) ON DELETE SET NULL,
+  nombre_titular TEXT NOT NULL,
+  puesto_referencia TEXT NOT NULL,
+  cantidad_puestos INT NOT NULL DEFAULT 1,
+  monto_esperado NUMERIC(10,2) NOT NULL, -- monto_por_puesto * cantidad_puestos
+  monto_pagado NUMERIC(10,2) NOT NULL DEFAULT 0,
+  estado TEXT NOT NULL DEFAULT 'pendiente', -- 'pendiente' | 'parcial' | 'pagado' | 'anulado'
+  observaciones TEXT,
+  motivo_anulacion TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- 3. Pagos / Abonos de cada cuota extra (Efectivo o QR)
+CREATE TABLE IF NOT EXISTS pagos_cobros_extras (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  cuota_id UUID NOT NULL REFERENCES cobros_extras_cuotas(id) ON DELETE CASCADE,
+  campana_id UUID NOT NULL REFERENCES cobros_extras_campanas(id) ON DELETE CASCADE,
+  monto NUMERIC(10,2) NOT NULL,
+  metodo_pago TEXT NOT NULL DEFAULT 'efectivo', -- 'efectivo' | 'qr'
+  nro_talonario_fisico TEXT,
+  fecha_pago DATE NOT NULL DEFAULT CURRENT_DATE,
+  observaciones TEXT,
+  anulado BOOLEAN NOT NULL DEFAULT FALSE,
+  motivo_anulacion TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- 4. Gastos / Egresos propios de la campaña (ej. Pago Aguinaldo al Guardia, compras Aniversario)
+CREATE TABLE IF NOT EXISTS egresos_cobros_extras (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  campana_id UUID NOT NULL REFERENCES cobros_extras_campanas(id) ON DELETE CASCADE,
+  descripcion TEXT NOT NULL,
+  monto NUMERIC(10,2) NOT NULL,
+  metodo_pago TEXT NOT NULL DEFAULT 'efectivo', -- 'efectivo' | 'qr'
+  fecha_egreso DATE NOT NULL DEFAULT CURRENT_DATE,
+  foto_url TEXT,
+  observaciones TEXT,
+  anulado BOOLEAN NOT NULL DEFAULT FALSE,
+  motivo_anulacion TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Habilitar RLS para usuarios autenticados
+ALTER TABLE cobros_extras_campanas ENABLE ROW LEVEL SECURITY;
+ALTER TABLE cobros_extras_cuotas ENABLE ROW LEVEL SECURITY;
+ALTER TABLE pagos_cobros_extras ENABLE ROW LEVEL SECURITY;
+ALTER TABLE egresos_cobros_extras ENABLE ROW LEVEL SECURITY;
+
+DO $$ DECLARE t TEXT; BEGIN FOREACH t IN ARRAY ARRAY[ 'cobros_extras_campanas', 'cobros_extras_cuotas', 'pagos_cobros_extras', 'egresos_cobros_extras' ] LOOP EXECUTE format('DROP POLICY IF EXISTS "allow_auth_all_%s" ON %I;', t, t); EXECUTE format('CREATE POLICY "allow_auth_all_%s" ON %I FOR ALL TO authenticated USING (true) WITH CHECK (true);', t, t); END LOOP; END $$;
+
+NOTIFY pgrst, 'reload schema';
+
 

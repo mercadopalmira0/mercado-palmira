@@ -12,6 +12,7 @@ import PerdonarMultaModal from '../modals/PerdonarMultaModal'
 import PerdonazoModal from '../modals/PerdonazoModal'
 import FotoUploaderModal from '../modals/FotoUploaderModal'
 import EditarMontosModal from '../modals/EditarMontosModal'
+import CobrosExtrasTab from './CobrosExtrasTab'
 import {
   Receipt,
   Zap,
@@ -39,7 +40,8 @@ export default function CobrarView() {
   const today = new Date()
   const [selectedMes, setSelectedMes] = useState(today.getMonth() + 1)
   const [selectedAnio, setSelectedAnio] = useState(today.getFullYear())
-  const [activeSubTab, setActiveSubTab] = useState('socios') // 'socios' | 'externos'
+  const [activeSubTab, setActiveSubTab] = useState('socios') // 'socios' | 'externos' | 'extras'
+  const [extrasAbiertasCount, setExtrasAbiertasCount] = useState(0)
 
   const [periodo, setPeriodo] = useState(null)
   const [cobros, setCobros] = useState([])
@@ -93,6 +95,14 @@ export default function CobrarView() {
       .maybeSingle()
       .then(({ data }) => {
         if (data) setTarifas(data)
+      })
+
+    supabase
+      .from('cobros_extras_campanas')
+      .select('id', { count: 'exact', head: true })
+      .eq('estado', 'abierta')
+      .then(({ count }) => {
+        if (typeof count === 'number') setExtrasAbiertasCount(count)
       })
   }, [])
 
@@ -913,8 +923,8 @@ export default function CobrarView() {
         </div>
       </div>
 
-      {/* Tabs Socios vs Externos */}
-      <div className="flex items-center gap-2 bg-white p-1.5 rounded-2xl border border-slate-200 shadow-sm w-fit">
+      {/* Tabs Socios vs Externos vs Cobros Extras */}
+      <div className="flex flex-wrap items-center gap-2 bg-white p-1.5 rounded-2xl border border-slate-200 shadow-sm w-full sm:w-fit">
         <button
           type="button"
           onClick={() => setActiveSubTab('socios')}
@@ -937,6 +947,18 @@ export default function CobrarView() {
         >
           <Users className="w-3.5 h-3.5" />
           <span>Externos (Guardia y Agua) ({externos.length})</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveSubTab('extras')}
+          className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${
+            activeSubTab === 'extras'
+              ? 'bg-amber-600 text-white shadow-sm'
+              : 'text-slate-600 hover:bg-slate-100'
+          }`}
+        >
+          <Sparkles className="w-3.5 h-3.5" />
+          <span>Cobros Extras ({extrasAbiertasCount})</span>
         </button>
       </div>
 
@@ -986,7 +1008,9 @@ export default function CobrarView() {
         </div>
       )}
 
-      {activeSubTab === 'externos' ? (
+      {activeSubTab === 'extras' ? (
+        <CobrosExtrasTab onCountChange={setExtrasAbiertasCount} />
+      ) : activeSubTab === 'externos' ? (
         /* TAB: APORTANTES EXTERNOS (GUARDIA Y AGUA - SIN MULTAS) */
         <div className="space-y-4">
           <div className="bg-indigo-50 border border-indigo-200 rounded-2xl p-4 text-xs text-indigo-900 flex flex-col sm:flex-row sm:items-center justify-between gap-2">

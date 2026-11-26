@@ -31,6 +31,7 @@ export default function DeudoresView() {
   const [cobrosServiciosPend, setCobrosServiciosPend] = useState([])
   const [cobrosExternosPend, setCobrosExternosPend] = useState([])
   const [afiliacionesPend, setAfiliacionesPend] = useState([])
+  const [cobrosExtrasPend, setCobrosExtrasPend] = useState([])
   const [socios, setSocios] = useState([])
   const [loading, setLoading] = useState(true)
   const [consolidadoSearch, setConsolidadoSearch] = useState('')
@@ -92,6 +93,7 @@ export default function DeudoresView() {
         { data: csData, error: csErr },
         { data: ceData, error: ceErr },
         { data: afData, error: afErr },
+        { data: extCuotasData, error: extCuotasErr },
       ] = await Promise.all([
         supabase
           .from('deudores_ciclos')
@@ -131,18 +133,29 @@ export default function DeudoresView() {
           `)
           .neq('estado', 'anulada')
           .gt('saldo_pendiente', 0),
+        supabase
+          .from('cobros_extras_cuotas')
+          .select(`
+            id, campana_id, unidad_id, externo_id, nombre_titular, puesto_referencia, cantidad_puestos, monto_esperado, monto_pagado, estado,
+            cobros_extras_campanas (id, nombre, estado),
+            unidades_cobro (id, numero_identificador, socio_responsable_id, socios (id, nombre, telefono)),
+            aportantes_externos (id, nombre_completo, telefono)
+          `)
+          .in('estado', ['pendiente', 'parcial']),
       ])
 
       if (dErr) throw dErr
       if (csErr) throw csErr
       if (ceErr) throw ceErr
       if (afErr) throw afErr
+      if (extCuotasErr) throw extCuotasErr
 
       setDeudas(dData || [])
       setSocios(sData || [])
       setCobrosServiciosPend(csData || [])
       setCobrosExternosPend(ceData || [])
       setAfiliacionesPend(afData || [])
+      setCobrosExtrasPend(extCuotasData || [])
     } catch (err) {
       console.error(err)
       setStatusMessage({ type: 'error', text: 'Error al cargar deudores: ' + err.message })
@@ -591,9 +604,10 @@ export default function DeudoresView() {
         cobrosExternos: cobrosExternosPend,
         deudoresCiclos: deudas,
         afiliaciones: afiliacionesPend,
+        cobrosExtrasCuotas: cobrosExtrasPend,
         origenCobroServicioDefault: 'Mes pendiente',
       }),
-    [cobrosServiciosPend, cobrosExternosPend, deudas, afiliacionesPend]
+    [cobrosServiciosPend, cobrosExternosPend, deudas, afiliacionesPend, cobrosExtrasPend]
   )
 
   const resumenConsolidadoFiltrado = useMemo(() => {
@@ -602,6 +616,7 @@ export default function DeudoresView() {
       if (consolidadoFilter === 'mensual' && !d.tieneMensual && !d.tieneExterno) return false
       if (consolidadoFilter === 'heredado' && !d.tieneHeredado) return false
       if (consolidadoFilter === 'afiliacion' && !d.tieneAfiliacion) return false
+      if (consolidadoFilter === 'cobro_extra' && !d.tieneCobroExtra) return false
       if (!q) return true
       return (
         String(d.nombre || '').toLowerCase().includes(q) ||
@@ -652,6 +667,7 @@ export default function DeudoresView() {
     if (fuente === 'mensual') return 'Mes pendiente'
     if (fuente === 'heredado') return 'Heredado'
     if (fuente === 'externo') return 'Externo'
+    if (fuente === 'cobro_extra') return 'Cobro Extra'
     return 'Afiliación'
   }
 
@@ -659,6 +675,7 @@ export default function DeudoresView() {
     if (fuente === 'mensual') return 'bg-red-100 text-red-800 border-red-200'
     if (fuente === 'heredado') return 'bg-amber-100 text-amber-900 border-amber-200'
     if (fuente === 'externo') return 'bg-indigo-100 text-indigo-800 border-indigo-200'
+    if (fuente === 'cobro_extra') return 'bg-purple-100 text-purple-800 border-purple-200'
     return 'bg-blue-100 text-blue-800 border-blue-200'
   }
 
@@ -754,11 +771,16 @@ export default function DeudoresView() {
                 {matrizConsolidada.totales.totalACobrar.toFixed(2)}{' '}
                 <span className="text-xs font-bold">Bs</span>
               </p>
-              <span className="text-[11px] text-slate-500 font-medium">
+              <span className="text-[11px] text-slate-500 font-medium block">
                 {matrizConsolidada.totales.cantidadDeudores}{' '}
                 {matrizConsolidada.totales.cantidadDeudores === 1 ? 'persona con deuda' : 'personas con deuda'} •{' '}
                 {matrizConsolidada.totales.cantidadItems} ítems
               </span>
+              {(matrizConsolidada.totales.totalCobrosExtras || 0) > 0 && (
+                <span className="text-[10px] font-bold text-purple-700 block mt-0.5">
+                  Incluye {matrizConsolidada.totales.totalCobrosExtras.toFixed(2)} Bs de Cobros Extras
+                </span>
+              )}
             </div>
 
             <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-sm">
@@ -820,6 +842,7 @@ export default function DeudoresView() {
                 { id: 'mensual', label: 'Con Deuda Mensual' },
                 { id: 'heredado', label: 'Con Deuda Heredada' },
                 { id: 'afiliacion', label: 'Con Afiliación' },
+                { id: 'cobro_extra', label: 'Con Cobro Extra' },
               ].map((opt) => (
                 <button
                   key={opt.id}
@@ -887,6 +910,11 @@ export default function DeudoresView() {
                           {d.tieneAfiliacion && (
                             <span className="px-2 py-0.5 rounded-md border text-[10px] font-bold uppercase bg-blue-100 text-blue-800 border-blue-200">
                               Afiliación
+                            </span>
+                          )}
+                          {d.tieneCobroExtra && (
+                            <span className="px-2 py-0.5 rounded-md border text-[10px] font-bold uppercase bg-purple-100 text-purple-800 border-purple-200">
+                              Cobro Extra
                             </span>
                           )}
                         </div>

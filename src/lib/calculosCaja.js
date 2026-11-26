@@ -7,6 +7,11 @@
  *              + Ingresos del ciclo (pagos_servicios, pagos_afiliacion, pagos_deudores_ciclos, cobros_externos)
  *              - Egresos Activos del ciclo
  *              ± Movimientos Internos del ciclo
+ *
+ * Nota Cobros Extras / Campañas:
+ * Los pagos (pagos_cobros_extras) y gastos (egresos_cobros_extras) de campañas independientes
+ * NO alteran Caja Servicios ni Caja Afiliaciones. Únicamente si el admin cierra una campaña y
+ * transfiere el sobrante explícitamente, entra vía movimientos_internos (caja_origen = 'externo').
  */
 
 function parseLocalDateStart(dateStr) {
