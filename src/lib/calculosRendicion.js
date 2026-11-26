@@ -260,13 +260,14 @@ function normalizarNombrePersona(str) {
     .replace(/\s+/g, ' ')
 }
 
-function buildMatrizDeudores({
+export function buildMatrizDeudores({
   cobrosServicios,
   cobrosExternos,
   deudoresCiclos,
   afiliaciones,
-  fechaInicioPeriodo,
-  fechaFinPeriodo,
+  fechaInicioPeriodo = null,
+  fechaFinPeriodo = null,
+  origenCobroServicioDefault = 'Mes actual',
 }) {
   const items = []
 
@@ -288,10 +289,15 @@ function buildMatrizDeudores({
 
     const p = c.periodos_mensuales
     const pDate = p ? new Date(p.anio, p.mes - 1, 1) : null
-    const esPeriodoActual =
-      pDate && fechaInicioPeriodo && fechaFinPeriodo
-        ? pDate >= fechaInicioPeriodo && pDate <= fechaFinPeriodo
-        : true
+    const hasPeriodoWindow = Boolean(pDate && fechaInicioPeriodo && fechaFinPeriodo)
+    const esPeriodoActual = hasPeriodoWindow
+      ? pDate >= fechaInicioPeriodo && pDate <= fechaFinPeriodo
+      : true
+    const origenServicio = hasPeriodoWindow
+      ? esPeriodoActual
+        ? 'Mes actual'
+        : 'Mes anterior'
+      : origenCobroServicioDefault
 
     const socioId =
       c.socio_id_historico ||
@@ -304,9 +310,11 @@ function buildMatrizDeudores({
 
     items.push({
       id: `cs-${c.id}`,
+      recordId: c.id,
+      fuente: 'mensual',
       groupKey: socioId ? `socio:${socioId}` : `nombre:${normalizarNombrePersona(nombre)}`,
       tipoCategoria: 'periodo_actual',
-      origen: esPeriodoActual ? 'Mes actual' : 'Mes anterior',
+      origen: origenServicio,
       nombre,
       telefono: c.unidades_cobro?.socios?.telefono || '',
       puesto,
@@ -334,6 +342,8 @@ function buildMatrizDeudores({
 
     items.push({
       id: `ext-${ce.id}`,
+      recordId: ce.id,
+      fuente: 'externo',
       groupKey: ce.externo_id ? `ext:${ce.externo_id}` : `nombre:${normalizarNombrePersona(nombre)}`,
       tipoCategoria: 'periodo_actual',
       origen: 'Externo',
@@ -368,6 +378,8 @@ function buildMatrizDeudores({
 
     items.push({
       id: `dc-${dc.id}`,
+      recordId: dc.id,
+      fuente: 'heredado',
       groupKey: dc.socio_id ? `socio:${dc.socio_id}` : `nombre:${normalizarNombrePersona(nombre)}`,
       tipoCategoria: 'deuda_anterior',
       origen: 'Deuda anterior',
@@ -399,6 +411,8 @@ function buildMatrizDeudores({
 
     items.push({
       id: `af-${af.id}`,
+      recordId: af.id,
+      fuente: 'afiliacion',
       groupKey: af.socio_id ? `socio:${af.socio_id}` : `nombre:${normalizarNombrePersona(nombre)}`,
       tipoCategoria: 'deuda_anterior',
       origen: 'Afiliación',
@@ -428,6 +442,13 @@ function buildMatrizDeudores({
         deudaAnterior: 0,
         multas: 0,
         totalACobrar: 0,
+        deudaMensualYExternos: 0,
+        deudaHeredada: 0,
+        deudaAfiliacion: 0,
+        tieneMensual: false,
+        tieneExterno: false,
+        tieneHeredado: false,
+        tieneAfiliacion: false,
         cantidadItems: 0,
         items: [],
       })
@@ -441,6 +462,19 @@ function buildMatrizDeudores({
     g.deudaAnterior = round2(g.deudaAnterior + it.capitalAnterior)
     g.multas = round2(g.multas + it.multa)
     g.totalACobrar = round2(g.totalACobrar + it.saldoPendiente)
+    if (it.fuente === 'mensual') {
+      g.tieneMensual = true
+      g.deudaMensualYExternos = round2(g.deudaMensualYExternos + it.saldoPendiente)
+    } else if (it.fuente === 'externo') {
+      g.tieneExterno = true
+      g.deudaMensualYExternos = round2(g.deudaMensualYExternos + it.saldoPendiente)
+    } else if (it.fuente === 'heredado') {
+      g.tieneHeredado = true
+      g.deudaHeredada = round2(g.deudaHeredada + it.saldoPendiente)
+    } else if (it.fuente === 'afiliacion') {
+      g.tieneAfiliacion = true
+      g.deudaAfiliacion = round2(g.deudaAfiliacion + it.saldoPendiente)
+    }
     g.cantidadItems += 1
     g.items.push(it)
   })
@@ -455,6 +489,13 @@ function buildMatrizDeudores({
       deudaAnterior: g.deudaAnterior,
       multas: g.multas,
       totalACobrar: g.totalACobrar,
+      deudaMensualYExternos: g.deudaMensualYExternos,
+      deudaHeredada: g.deudaHeredada,
+      deudaAfiliacion: g.deudaAfiliacion,
+      tieneMensual: g.tieneMensual,
+      tieneExterno: g.tieneExterno,
+      tieneHeredado: g.tieneHeredado,
+      tieneAfiliacion: g.tieneAfiliacion,
       cantidadItems: g.cantidadItems,
       tienePeriodoActual: g.deudaPeriodoActual > 0 || g.multas > 0,
       tieneDeudaAnterior: g.deudaAnterior > 0,
@@ -473,6 +514,12 @@ function buildMatrizDeudores({
       deudaAnterior: round2(resumenPorDeudor.reduce((s, r) => s + r.deudaAnterior, 0)),
       multas: round2(resumenPorDeudor.reduce((s, r) => s + r.multas, 0)),
       totalACobrar: round2(resumenPorDeudor.reduce((s, r) => s + r.totalACobrar, 0)),
+      totalMensualesYExternos: round2(
+        resumenPorDeudor.reduce((s, r) => s + r.deudaMensualYExternos, 0)
+      ),
+      totalHeredados: round2(resumenPorDeudor.reduce((s, r) => s + r.deudaHeredada, 0)),
+      totalAfiliaciones: round2(resumenPorDeudor.reduce((s, r) => s + r.deudaAfiliacion, 0)),
+      cantidadDeudores: resumenPorDeudor.length,
       cantidadItems: detalleDeudas.length,
       totalEsperadoDetalle: round2(detalleDeudas.reduce((s, d) => s + d.montoEsperado, 0)),
       totalAbonadoDetalle: round2(detalleDeudas.reduce((s, d) => s + d.abonado, 0)),
