@@ -3,7 +3,7 @@ import { useAuth } from '../../context/AuthContext'
 import { Store, ShieldCheck, Mail, Lock, User, AlertCircle, LogIn } from 'lucide-react'
 
 export default function LoginScreen() {
-  const { signIn, signUp } = useAuth()
+  const { signIn, signUp, inactivityMessage, clearInactivityMessage } = useAuth()
   const [isRegistering, setIsRegistering] = useState(false)
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -65,6 +65,22 @@ export default function LoginScreen() {
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-4">
+            {inactivityMessage && (
+              <div className="p-3 bg-amber-50 border border-amber-300 rounded-xl text-amber-900 text-xs flex items-start justify-between gap-2">
+                <div className="flex items-start gap-2">
+                  <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0 text-amber-600" />
+                  <span className="font-semibold">{inactivityMessage}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={clearInactivityMessage}
+                  className="text-amber-700 hover:text-amber-950 font-bold text-[11px] shrink-0"
+                >
+                  OK
+                </button>
+              </div>
+            )}
+
             {errorMsg && (
               <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-red-700 text-xs flex items-start gap-2">
                 <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />

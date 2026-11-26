@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
+import { descargarBackupCompleto } from '../../lib/backup'
 import {
   ShieldAlert,
   AlertTriangle,
@@ -10,7 +11,10 @@ import {
   Clock,
   FileText,
   ChevronDown,
-  ChevronUp
+  ChevronUp,
+  Download,
+  CheckCircle2,
+  X
 } from 'lucide-react'
 
 function getBadgeStyle(accion = '') {
@@ -28,9 +32,11 @@ function getBadgeStyle(accion = '') {
 }
 
 export default function BitacoraView({ role }) {
-  const { isAdmin } = useAuth()
+  const { user, isAdmin } = useAuth()
   const [logs, setLogs] = useState([])
   const [loading, setLoading] = useState(true)
+  const [downloadingBackup, setDownloadingBackup] = useState(false)
+  const [backupStatus, setBackupStatus] = useState(null)
   const [filterTipo, setFilterTipo] = useState('todos') // 'todos' | 'edicion' | 'eliminacion' | 'anulacion'
   const [expandedIds, setExpandedIds] = useState({})
 
@@ -63,6 +69,28 @@ export default function BitacoraView({ role }) {
 
   const toggleExpand = (id) => {
     setExpandedIds((prev) => ({ ...prev, [id]: !prev[id] }))
+  }
+
+  const handleDescargarRespaldo = async () => {
+    if (!isAdmin && role !== 'admin') return
+    setDownloadingBackup(true)
+    setBackupStatus(null)
+    try {
+      const res = await descargarBackupCompleto({ usuarioId: user?.id })
+      setBackupStatus({
+        type: 'success',
+        text: `Respaldo ${res.fileName} descargado (${res.totalRegistros} registros) y registrado en bitácora.`,
+      })
+      await fetchLogs()
+    } catch (err) {
+      console.error(err)
+      setBackupStatus({
+        type: 'error',
+        text: 'Error al generar el respaldo manual: ' + (err.message || 'Error desconocido'),
+      })
+    } finally {
+      setDownloadingBackup(false)
+    }
   }
 
   if (!isAdmin && role !== 'admin') {
@@ -100,15 +128,50 @@ export default function BitacoraView({ role }) {
           </p>
         </div>
 
-        <button
-          onClick={fetchLogs}
-          disabled={loading}
-          className="p-2.5 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 transition-colors self-start sm:self-auto flex items-center gap-1.5 text-xs font-semibold"
-        >
-          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin text-red-600' : ''}`} />
-          <span>Actualizar</span>
-        </button>
+        <div className="flex flex-wrap items-center gap-2 self-start sm:self-auto">
+          {(isAdmin || role === 'admin') && (
+            <button
+              type="button"
+              onClick={handleDescargarRespaldo}
+              disabled={downloadingBackup}
+              className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-xl text-xs font-bold shadow-sm transition-colors flex items-center gap-1.5"
+            >
+              <Download className={`w-4 h-4 ${downloadingBackup ? 'animate-bounce' : ''}`} />
+              <span>{downloadingBackup ? 'Generando Respaldo...' : 'Descargar Respaldo Completo (.json)'}</span>
+            </button>
+          )}
+          <button
+            onClick={fetchLogs}
+            disabled={loading}
+            className="p-2.5 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 transition-colors flex items-center gap-1.5 text-xs font-semibold"
+          >
+            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin text-red-600' : ''}`} />
+            <span>Actualizar</span>
+          </button>
+        </div>
       </div>
+
+      {backupStatus && (
+        <div
+          className={`p-4 rounded-2xl border text-xs flex items-center justify-between gap-2 ${
+            backupStatus.type === 'error'
+              ? 'bg-red-50 border-red-200 text-red-800'
+              : 'bg-emerald-50 border-emerald-200 text-emerald-800'
+          }`}
+        >
+          <div className="flex items-center gap-2">
+            {backupStatus.type === 'error' ? (
+              <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+            ) : (
+              <CheckCircle2 className="w-4 h-4 flex-shrink-0" />
+            )}
+            <span>{backupStatus.text}</span>
+          </div>
+          <button type="button" onClick={() => setBackupStatus(null)}>
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
 
       {/* Tarjetas de Métricas */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">

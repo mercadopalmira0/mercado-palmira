@@ -327,4 +327,100 @@ DO $$ DECLARE t TEXT; BEGIN FOREACH t IN ARRAY ARRAY[ 'cobros_extras_campanas', 
 
 NOTIFY pgrst, 'reload schema';
 
+-- ============================================================
+-- BLINDAJE RLS ESTRICTO POR ROL (ADMIN vs DIRECTIVA SOLO LECTURA)
+-- ============================================================
+
+-- Funciones auxiliares SECURITY DEFINER (evitan recursión RLS sobre perfiles_usuarios)
+CREATE OR REPLACE FUNCTION public.es_admin_activo()
+RETURNS BOOLEAN
+LANGUAGE sql
+SECURITY DEFINER
+STABLE
+SET search_path = public
+AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM public.perfiles_usuarios
+    WHERE id = auth.uid() AND rol = 'admin' AND activo = true
+  );
+$$;
+
+CREATE OR REPLACE FUNCTION public.es_usuario_activo()
+RETURNS BOOLEAN
+LANGUAGE sql
+SECURITY DEFINER
+STABLE
+SET search_path = public
+AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM public.perfiles_usuarios
+    WHERE id = auth.uid() AND activo = true
+  );
+$$;
+
+-- Mantener compatibilidad con public.es_admin() usada en schema.sql
+CREATE OR REPLACE FUNCTION public.es_admin()
+RETURNS BOOLEAN
+LANGUAGE sql
+SECURITY DEFINER
+STABLE
+SET search_path = public
+AS $$
+  SELECT public.es_admin_activo();
+$$;
+
+-- Aplicar políticas restrictivas por rol en todas las tablas operativas de migraciones:
+--   * SELECT: cualquier usuario activo (admin o directiva)
+--   * INSERT / UPDATE / DELETE: únicamente admin activo
+DO $$
+DECLARE
+  t TEXT;
+BEGIN
+  FOREACH t IN ARRAY ARRAY[
+    'ciclos_hacienda',
+    'deudores_ciclos',
+    'pagos_deudores_ciclos',
+    'campañas_perdonazo',
+    'pagos_guardia',
+    'aportantes_externos',
+    'cobros_externos',
+    'inventario_mercado',
+    'traspasos_puestos',
+    'cobros_extras_campanas',
+    'cobros_extras_cuotas',
+    'pagos_cobros_extras',
+    'egresos_cobros_extras'
+  ]
+  LOOP
+    EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY;', t);
+    EXECUTE format('DROP POLICY IF EXISTS "allow_auth_all_%s" ON public.%I;', t, t);
+    EXECUTE format('DROP POLICY IF EXISTS "rls_lectura_activos_%s" ON public.%I;', t, t);
+    EXECUTE format('DROP POLICY IF EXISTS "rls_admin_escritura_%s" ON public.%I;', t, t);
+
+    EXECUTE format(
+      'CREATE POLICY "rls_lectura_activos_%s" ON public.%I FOR SELECT TO authenticated USING (public.es_usuario_activo());',
+      t, t
+    );
+    EXECUTE format(
+      'CREATE POLICY "rls_admin_escritura_%s" ON public.%I FOR ALL TO authenticated USING (public.es_admin_activo()) WITH CHECK (public.es_admin_activo());',
+      t, t
+    );
+  END LOOP;
+END $$;
+
+-- Reforzar inmutabilidad y acceso exclusivo de bitacora_auditoria
+ALTER TABLE public.bitacora_auditoria ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "bitacora_lectura_solo_admin" ON public.bitacora_auditoria;
+DROP POLICY IF EXISTS "bitacora_insercion_usuarios" ON public.bitacora_auditoria;
+
+CREATE POLICY "bitacora_lectura_solo_admin" ON public.bitacora_auditoria
+  FOR SELECT TO authenticated
+  USING (public.es_admin_activo());
+
+CREATE POLICY "bitacora_insercion_usuarios" ON public.bitacora_auditoria
+  FOR INSERT TO authenticated
+  WITH CHECK (public.es_usuario_activo());
+
+NOTIFY pgrst, 'reload schema';
+
 
