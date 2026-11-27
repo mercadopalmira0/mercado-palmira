@@ -47,6 +47,7 @@ export default function CobrarView() {
   const [loading, setLoading] = useState(true)
   const [searchTerm, setSearchTerm] = useState('')
   const [filterEstado, setFilterEstado] = useState('todos')
+  const [onlyTarifadores, setOnlyTarifadores] = useState(false)
   const [statusMessage, setStatusMessage] = useState(null)
 
   // Externos
@@ -742,8 +743,12 @@ export default function CobrarView() {
     }
   }
 
+  const tarifadoresCount = cobros.filter((c) => c.modalidad_aplicada === 'variable').length
+
   // Filtrado de cobros de socios (usando nombre histórico y miembros de grupo si existe)
   const filteredCobros = cobros.filter((c) => {
+    if (onlyTarifadores && c.modalidad_aplicada !== 'variable') return false
+
     const term = searchTerm.toLowerCase()
     const socioName = getNombreSocioCobro(c).toLowerCase()
     const puestoId = c.unidades_cobro?.numero_identificador?.toLowerCase() || ''
@@ -1291,44 +1296,61 @@ export default function CobrarView() {
 
                 <div className="flex items-center space-x-1.5 overflow-x-auto w-full sm:w-auto text-xs font-medium pb-1 sm:pb-0">
                   <button
+                    type="button"
                     onClick={() => setFilterEstado('todos')}
-                    className={`px-3 py-1.5 rounded-xl transition-all ${
+                    className={`px-3 py-1.5 rounded-xl transition-all whitespace-nowrap shrink-0 ${
                       filterEstado === 'todos' ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                     }`}
                   >
                     Todos ({cobros.length})
                   </button>
                   <button
+                    type="button"
                     onClick={() => setFilterEstado('pendiente')}
-                    className={`px-3 py-1.5 rounded-xl transition-all ${
+                    className={`px-3 py-1.5 rounded-xl transition-all whitespace-nowrap shrink-0 ${
                       filterEstado === 'pendiente' ? 'bg-amber-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                     }`}
                   >
                     Pendientes
                   </button>
                   <button
+                    type="button"
                     onClick={() => setFilterEstado('parcial')}
-                    className={`px-3 py-1.5 rounded-xl transition-all ${
+                    className={`px-3 py-1.5 rounded-xl transition-all whitespace-nowrap shrink-0 ${
                       filterEstado === 'parcial' ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                     }`}
                   >
                     A cuenta
                   </button>
                   <button
+                    type="button"
                     onClick={() => setFilterEstado('pagado')}
-                    className={`px-3 py-1.5 rounded-xl transition-all ${
+                    className={`px-3 py-1.5 rounded-xl transition-all whitespace-nowrap shrink-0 ${
                       filterEstado === 'pagado' ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                     }`}
                   >
                     Pagados
                   </button>
                   <button
+                    type="button"
                     onClick={() => setFilterEstado('con_multa')}
-                    className={`px-3 py-1.5 rounded-xl transition-all ${
+                    className={`px-3 py-1.5 rounded-xl transition-all whitespace-nowrap shrink-0 ${
                       filterEstado === 'con_multa' ? 'bg-red-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                     }`}
                   >
                     Con Multa
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setOnlyTarifadores((prev) => !prev)}
+                    className={`px-3 py-1.5 rounded-xl transition-all whitespace-nowrap shrink-0 inline-flex items-center gap-1 border ${
+                      onlyTarifadores
+                        ? 'bg-amber-500 text-white border-amber-600 font-bold shadow-sm'
+                        : 'bg-amber-50 text-amber-800 border-amber-200 hover:bg-amber-100'
+                    }`}
+                  >
+                    <Zap className="w-3.5 h-3.5" />
+                    <span>Tarifadores ({tarifadoresCount})</span>
                   </button>
                 </div>
               </div>

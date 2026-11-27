@@ -7,7 +7,7 @@ export default function Sidebar({ currentTab, onSelectTab }) {
   const role = isAdmin ? 'admin' : isDirectiva ? 'directiva' : 'visitante'
 
   return (
-    <aside className="hidden lg:flex flex-col w-64 bg-slate-900 border-r border-slate-800 p-4 text-slate-300 select-none">
+    <aside className="hidden lg:flex lg:sticky lg:top-16 lg:h-[calc(100vh-4rem)] lg:self-start lg:overflow-y-auto shrink-0 no-print flex-col w-64 bg-slate-900 border-r border-slate-800 p-4 text-slate-300 select-none">
       <div className="px-3 py-2 mb-2">
         <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
           Módulos de Gestión
