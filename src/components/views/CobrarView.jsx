@@ -1663,6 +1663,9 @@ export default function CobrarView() {
         isOpen={Boolean(selectedCobroForPago)}
         onClose={() => setSelectedCobroForPago(null)}
         cobro={selectedCobroForPago}
+        tarifas={tarifas}
+        mes={selectedMes}
+        anio={selectedAnio}
         perdonazoActivo={perdonazoActivo}
         isAdmin={isAdmin}
         onEditMontos={(c) => setEditarMontosTarget({ tipo: 'socio', cobro: c })}

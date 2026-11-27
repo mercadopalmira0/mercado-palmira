@@ -1,15 +1,19 @@
-import React, { useState } from 'react'
+import React, { useState, useMemo, useRef } from 'react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
 import { registrarAuditoria } from '../../lib/auditoria'
-import { getNombreSocioCobro } from '../../lib/formatters'
+import { getNombreSocioCobro, getBoliviaDateStr, toBoliviaNoonISO, round2 } from '../../lib/formatters'
+import { calcularMultaMora, calcularFechaVencimiento, parseFechaPagoBolivia } from '../../lib/calculosCobro'
 import FotoUploaderModal from './FotoUploaderModal'
-import { Receipt, Coins, QrCode, CheckCircle2, AlertCircle, X, Camera, ExternalLink, Sparkles, Edit2 } from 'lucide-react'
+import { Receipt, Coins, QrCode, CheckCircle2, AlertCircle, X, Camera, ExternalLink, Sparkles, Edit2, Calendar } from 'lucide-react'
 
 export default function CobrarModal({
   isOpen,
   onClose,
   cobro,
+  tarifas = {},
+  mes = null,
+  anio = null,
   perdonazoActivo = null,
   isAdmin = false,
   onEditMontos = null,
@@ -18,43 +22,163 @@ export default function CobrarModal({
   const { user } = useAuth()
   const [monto, setMonto] = useState('')
   const [metodoPago, setMetodoPago] = useState('efectivo')
+  const [fechaPago, setFechaPago] = useState(() => getBoliviaDateStr())
   const [nroTalonarioFisico, setNroTalonarioFisico] = useState('')
   const [comprobanteUrl, setComprobanteUrl] = useState('')
   const [saving, setSaving] = useState(false)
   const [errorMsg, setErrorMsg] = useState('')
   const [successMsg, setSuccessMsg] = useState('')
   const [isPhotoModalOpen, setIsPhotoModalOpen] = useState(false)
+  const prevSaldoAutoRef = useRef(null)
 
-  const totalAPagar = cobro ? cobro.totalAPagar ?? cobro.total_a_pagar ?? 0 : 0
-  const totalPagado = cobro
-    ? cobro.totalPagado ??
-      (cobro.pagos_servicios || [])
-        .filter((p) => p.estado === 'activo')
-        .reduce((s, p) => s + (parseFloat(p.monto) || 0), 0)
+  const totalAPagarOriginal = cobro ? round2(cobro.totalAPagar ?? cobro.total_a_pagar ?? 0) : 0
+  const multaOriginal = cobro ? round2(cobro.montoMulta ?? cobro.monto_multa ?? 0) : 0
+  const multaPerdonadaActual = cobro ? round2(parseFloat(cobro.multaPerdonada ?? cobro.multa_perdonada) || 0) : 0
+  const multaNetaOriginal = cobro
+    ? round2(cobro.multaNeta ?? Math.max(0, multaOriginal - multaPerdonadaActual - (cobro.descuentoPerdonazo || 0)))
     : 0
-  const saldoPendiente = Math.max(0, totalAPagar - totalPagado)
+  const subtotalSinMulta = round2(Math.max(0, totalAPagarOriginal - multaNetaOriginal))
+
+  const pagosActivosExistentes = useMemo(() => {
+    if (!cobro) return []
+    if (Array.isArray(cobro.pagosActivos)) return cobro.pagosActivos
+    return (cobro.pagos_servicios || []).filter((p) => p.estado === 'activo')
+  }, [cobro])
+
+  const totalPagado = useMemo(() => {
+    if (!cobro) return 0
+    if (cobro.totalPagado != null) return round2(cobro.totalPagado)
+    return round2(pagosActivosExistentes.reduce((s, p) => s + (parseFloat(p.monto) || 0), 0))
+  }, [cobro, pagosActivosExistentes])
+
+  const mesCobro = mes || cobro?.periodos_mensuales?.mes || null
+  const anioCobro = anio || cobro?.periodos_mensuales?.anio || null
+
+  // Recálculo en vivo de la multa usando la Fecha de Pago real seleccionada
+  const simulacionLive = useMemo(() => {
+    if (!cobro || !mesCobro || !anioCobro || !fechaPago) {
+      const saldoFallback = round2(Math.max(0, totalAPagarOriginal - totalPagado))
+      return {
+        multaCalculada: multaOriginal,
+        multaNeta: multaNetaOriginal,
+        descuentoPerdonazo: cobro?.descuentoPerdonazo || 0,
+        totalAPagar: totalAPagarOriginal,
+        saldoPendiente: saldoFallback,
+        motivoExencion: cobro?.motivoExencion || null,
+        multaEliminadaPorFecha: false,
+      }
+    }
+
+    const montoInputNum = round2(parseFloat(monto) || 0)
+    const fechaPagoDate = parseFechaPagoBolivia(fechaPago)
+    const fechaVenc = calcularFechaVencimiento(mesCobro, anioCobro, cobro.dias_prorroga || 0)
+    const pagoDentroDePlazo = Boolean(fechaPagoDate && fechaVenc && fechaPagoDate <= fechaVenc)
+
+    // Si la fecha elegida es antes/en el vencimiento y hay un pago válido (>= 35 Bs o el saldo completo sin multa),
+    // simular el pago con esa fecha_pago real para evaluar la exención de multa.
+    const pagosSimulados = [...pagosActivosExistentes]
+    if (montoInputNum > 0) {
+      pagosSimulados.push({
+        monto: montoInputNum,
+        fecha_pago: toBoliviaNoonISO(fechaPago),
+        estado: 'activo',
+      })
+    }
+
+    const { multaCalculada, motivoExencion } = calcularMultaMora({
+      mes: mesCobro,
+      anio: anioCobro,
+      diasProrroga: cobro.dias_prorroga || 0,
+      fechaPagoEspecial: cobro.unidades_cobro?.socios?.fecha_pago_especial || null,
+      pagosActivos: pagosSimulados,
+      tarifas,
+    })
+
+    // Caso adicional: si cambia la fecha a dentro de plazo pero aún no modificó el monto (o es pago parcial menor al mínimo cuando la cuota base < 35)
+    const multaEvaluada =
+      pagoDentroDePlazo && subtotalSinMulta > 0 && subtotalSinMulta < (parseFloat(tarifas?.multa_minimo_exento) || 35) && montoInputNum >= subtotalSinMulta
+        ? 0
+        : multaCalculada
+
+    const multaDespuesManual = round2(Math.max(0, multaEvaluada - multaPerdonadaActual))
+    let descuentoPerdonazo = 0
+    if (perdonazoActivo && multaDespuesManual > 0) {
+      const pct = parseFloat(perdonazoActivo.porcentaje_descuento) || 0
+      descuentoPerdonazo = round2(multaDespuesManual * (pct / 100))
+    }
+
+    const multaNeta = round2(Math.max(0, multaDespuesManual - descuentoPerdonazo))
+    const totalAPagar = round2(subtotalSinMulta + multaNeta)
+    const saldoPendiente = round2(Math.max(0, totalAPagar - totalPagado))
+
+    return {
+      multaCalculada: multaEvaluada,
+      multaNeta,
+      descuentoPerdonazo,
+      totalAPagar,
+      saldoPendiente,
+      motivoExencion,
+      multaEliminadaPorFecha: multaOriginal > 0 && multaEvaluada === 0 && pagoDentroDePlazo,
+    }
+  }, [
+    cobro,
+    mesCobro,
+    anioCobro,
+    fechaPago,
+    monto,
+    pagosActivosExistentes,
+    tarifas,
+    subtotalSinMulta,
+    multaPerdonadaActual,
+    multaOriginal,
+    multaNetaOriginal,
+    totalAPagarOriginal,
+    totalPagado,
+    perdonazoActivo,
+  ])
+
+  const totalAPagar = simulacionLive.totalAPagar
+  const saldoPendiente = simulacionLive.saldoPendiente
 
   React.useEffect(() => {
     if (isOpen && cobro) {
-      setMonto(saldoPendiente > 0 ? saldoPendiente.toFixed(2) : '')
+      const saldoInicial = round2(Math.max(0, totalAPagarOriginal - totalPagado))
+      setMonto(saldoInicial > 0 ? saldoInicial.toFixed(2) : '')
+      prevSaldoAutoRef.current = saldoInicial
       setMetodoPago('efectivo')
+      setFechaPago(getBoliviaDateStr())
       setNroTalonarioFisico('')
       setComprobanteUrl('')
       setErrorMsg('')
       setSuccessMsg('')
     }
-  }, [isOpen, cobro, saldoPendiente])
+  }, [isOpen, cobro, totalAPagarOriginal, totalPagado])
+
+  // Si al cambiar la Fecha de Pago cambia el saldo pendiente (ej. se quita multa al poner fecha del día 30)
+  // y el monto estaba en el saldo anterior, actualizarlo automáticamente.
+  React.useEffect(() => {
+    if (!isOpen || !cobro) return
+    const prev = prevSaldoAutoRef.current
+    if (prev != null && Math.abs((parseFloat(monto) || 0) - prev) < 0.01 && Math.abs(saldoPendiente - prev) >= 0.01) {
+      setMonto(saldoPendiente > 0 ? saldoPendiente.toFixed(2) : '')
+    }
+    prevSaldoAutoRef.current = saldoPendiente
+  }, [saldoPendiente, isOpen, cobro])
 
   if (!isOpen || !cobro) return null
 
   const nombreSocio = getNombreSocioCobro(cobro)
-  const aplicaPerdonazo = Boolean(perdonazoActivo && (cobro.descuentoPerdonazo || 0) > 0)
+  const aplicaPerdonazo = Boolean(perdonazoActivo && (simulacionLive.descuentoPerdonazo || 0) > 0)
 
   const handleRegisterPayment = async (e) => {
     e.preventDefault()
-    const montoNum = parseFloat(monto)
+    const montoNum = round2(parseFloat(monto) || 0)
     if (!montoNum || montoNum <= 0) {
       setErrorMsg('Ingresa un monto válido mayor a 0.')
+      return
+    }
+    if (!fechaPago) {
+      setErrorMsg('Selecciona la fecha real de pago.')
       return
     }
 
@@ -63,6 +187,7 @@ export default function CobrarModal({
     setSuccessMsg('')
 
     try {
+      const fechaPagoISO = toBoliviaNoonISO(fechaPago)
       const { error: pagoError } = await supabase.from('pagos_servicios').insert([
         {
           cobro_id: cobro.id,
@@ -71,24 +196,24 @@ export default function CobrarModal({
           nro_talonario_fisico: nroTalonarioFisico.trim() || null,
           comprobante_drive_url: comprobanteUrl || null,
           estado: 'activo',
-          fecha_pago: new Date().toISOString(),
+          fecha_pago: fechaPagoISO,
         },
       ])
 
       if (pagoError) throw pagoError
 
-      const nuevoTotalPagado = totalPagado + montoNum
-      const nuevoSaldo = totalAPagar - nuevoTotalPagado
+      const nuevoTotalPagado = round2(totalPagado + montoNum)
+      const nuevoSaldo = round2(totalAPagar - nuevoTotalPagado)
       const nuevoEstado = nuevoSaldo <= 0 ? 'pagado' : 'parcial'
 
       const cobroUpdate = {
         estado: nuevoEstado,
-        monto_multa: cobro.montoMulta ?? cobro.monto_multa ?? 0,
+        monto_multa: simulacionLive.multaCalculada,
         total_a_pagar: totalAPagar,
       }
 
       if (aplicaPerdonazo) {
-        const nuevaMultaPerdonada = (parseFloat(cobro.multaPerdonada) || 0) + (cobro.descuentoPerdonazo || 0)
+        const nuevaMultaPerdonada = round2(multaPerdonadaActual + simulacionLive.descuentoPerdonazo)
         cobroUpdate.multa_perdonada = nuevaMultaPerdonada
         cobroUpdate.motivo_perdon_multa = [
           cobro.motivo_perdon_multa,
@@ -114,9 +239,9 @@ export default function CobrarModal({
             cobro_id: cobro.id,
             campania: perdonazoActivo.nombre,
             porcentaje: perdonazoActivo.porcentaje_descuento,
-            multa_original: cobro.montoMulta,
-            descuento_aplicado: cobro.descuentoPerdonazo,
-            multa_final: cobro.multaNeta,
+            multa_original: simulacionLive.multaCalculada,
+            descuento_aplicado: simulacionLive.descuentoPerdonazo,
+            multa_final: simulacionLive.multaNeta,
           },
         })
       }
@@ -172,9 +297,9 @@ export default function CobrarModal({
               </p>
               {aplicaPerdonazo ? (
                 <p className="text-purple-700 mt-0.5">
-                  Multa original: <span className="line-through">{cobro.montoMulta.toFixed(2)} Bs</span>{' '}
-                  ➔ Con perdonazo: <strong>{cobro.multaNeta.toFixed(2)} Bs</strong> (Ahorro:{' '}
-                  {cobro.descuentoPerdonazo.toFixed(2)} Bs)
+                  Multa original: <span className="line-through">{simulacionLive.multaCalculada.toFixed(2)} Bs</span>{' '}
+                  ➔ Con perdonazo: <strong>{simulacionLive.multaNeta.toFixed(2)} Bs</strong> (Ahorro:{' '}
+                  {simulacionLive.descuentoPerdonazo.toFixed(2)} Bs)
                 </p>
               ) : (
                 <p className="text-purple-700 mt-0.5">Este cobro no tiene multa pendiente.</p>
@@ -310,18 +435,43 @@ export default function CobrarModal({
             </div>
           </div>
 
-          <div>
-            <label className="block text-xs font-semibold text-slate-700 mb-1">
-              N° Recibo Talonario Físico (Opcional)
-            </label>
-            <input
-              type="text"
-              value={nroTalonarioFisico}
-              onChange={(e) => setNroTalonarioFisico(e.target.value)}
-              placeholder="Ej. Recibo 0452"
-              className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:outline-none"
-            />
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1 flex items-center gap-1">
+                <Calendar className="w-3.5 h-3.5 text-emerald-600" />
+                <span>Fecha de Pago <span className="text-red-500">*</span></span>
+              </label>
+              <input
+                type="date"
+                required
+                value={fechaPago}
+                onChange={(e) => setFechaPago(e.target.value)}
+                className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-300 rounded-xl font-semibold text-slate-800 focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">
+                N° Recibo Talonario Físico (Opcional)
+              </label>
+              <input
+                type="text"
+                value={nroTalonarioFisico}
+                onChange={(e) => setNroTalonarioFisico(e.target.value)}
+                placeholder="Ej. Recibo 0452"
+                className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+              />
+            </div>
           </div>
+
+          {simulacionLive.multaEliminadaPorFecha && (
+            <div className="p-2.5 bg-emerald-50 border border-emerald-200 rounded-xl text-[11px] text-emerald-800 flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+              <span>
+                Pago dentro de plazo según fecha real (<strong>{fechaPago}</strong>): multa exenta ({simulacionLive.multaCalculada.toFixed(2)} Bs).
+              </span>
+            </div>
+          )}
 
           <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-xs">
             <span className="text-slate-600">Foto de Comprobante (Drive):</span>

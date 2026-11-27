@@ -29,6 +29,17 @@ export function calcularFechaVencimiento(mes, anio, diasProrroga = 0) {
   return finDeMes
 }
 
+export function parseFechaPagoBolivia(fechaVal) {
+  if (!fechaVal) return null
+  if (fechaVal instanceof Date) return fechaVal
+  const str = String(fechaVal).trim()
+  if (/^\d{4}-\d{2}-\d{2}$/.test(str)) {
+    return new Date(`${str}T12:00:00-04:00`)
+  }
+  const parsed = new Date(str)
+  return Number.isNaN(parsed.getTime()) ? null : parsed
+}
+
 export function calcularMultaMora({
   mes,
   anio,
@@ -56,8 +67,12 @@ export function calcularMultaMora({
     }
   }
 
+  // Evalúa estrictamente p.fecha_pago (nunca created_at) para respetar pagos registrados con fecha retroactiva
   const totalAbonadoAntes = pagosActivos
-    .filter((p) => new Date(p.fecha_pago) <= fechaVencimiento)
+    .filter((p) => {
+      const fPago = parseFechaPagoBolivia(p?.fecha_pago)
+      return Boolean(fPago && fPago <= fechaVencimiento)
+    })
     .reduce((sum, p) => sum + (parseFloat(p.monto) || 0), 0)
 
   if (totalAbonadoAntes >= minimoExento) {
@@ -170,6 +185,7 @@ export function calcularDesgloseCobro({
   montoGuardiaPersonalizado = null,
   montoAguaPersonalizado = null,
   montoLuzPersonalizado = null,
+  fechaActual = new Date(),
 }) {
   const baseVariable = parseFloat(tarifas.base_variable_puesto) || 58
   const tarifaCerrado = parseFloat(tarifas.tarifa_fija_cerrado) || 55
@@ -259,6 +275,7 @@ export function calcularDesgloseCobro({
     fechaPagoEspecial,
     pagosActivos,
     tarifas,
+    fechaActual,
   })
 
   const manualPerdon = parseFloat(multaPerdonada) || 0

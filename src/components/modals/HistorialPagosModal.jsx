@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
 import { registrarAuditoria, registrarEdicionAuditoria, registrarEliminacionAuditoria } from '../../lib/auditoria'
-import { getNombreSocioCobro } from '../../lib/formatters'
+import { getNombreSocioCobro, formatFechaHoraBolivia } from '../../lib/formatters'
 import ConfirmMotivoModal from './ConfirmMotivoModal'
 import { Receipt, Coins, QrCode, X, AlertCircle, CheckCircle2, RefreshCw, ExternalLink, ShieldAlert, Edit2, Trash2 } from 'lucide-react'
 
@@ -272,7 +272,7 @@ export default function HistorialPagosModal({
                             {parseFloat(pago.monto).toFixed(2)} Bs
                           </p>
                           <span className="text-[10px] text-slate-400">
-                            {new Date(pago.fecha_pago).toLocaleString('es-BO', { dateStyle: 'short', timeStyle: 'short' })}
+                            {formatFechaHoraBolivia(pago.fecha_pago)}
                           </span>
                         </div>
                       </div>

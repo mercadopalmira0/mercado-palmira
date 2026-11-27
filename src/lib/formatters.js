@@ -30,6 +30,52 @@ export function formatFechaDMY(fechaStr) {
 }
 
 /**
+ * Devuelve la fecha de hoy en Bolivia (America/La_Paz) en formato YYYY-MM-DD.
+ */
+export function getBoliviaDateStr(date = new Date()) {
+  try {
+    return new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'America/La_Paz',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(date)
+  } catch {
+    return getLocalDateStr(date)
+  }
+}
+
+/**
+ * Convierte YYYY-MM-DD a ISO con mediodía de Bolivia (-04:00) para evitar desfases UTC.
+ */
+export function toBoliviaNoonISO(fechaYMD) {
+  const clean = String(fechaYMD || '').split('T')[0]
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(clean)) return new Date().toISOString()
+  return `${clean}T12:00:00-04:00`
+}
+
+/**
+ * Formatea una fecha/hora de pago en zona horaria de Bolivia (America/La_Paz).
+ */
+export function formatFechaHoraBolivia(fechaVal) {
+  if (!fechaVal) return ''
+  const str = String(fechaVal)
+  const dateObj = /^\d{4}-\d{2}-\d{2}$/.test(str)
+    ? new Date(`${str}T12:00:00-04:00`)
+    : new Date(str)
+  if (Number.isNaN(dateObj.getTime())) return str
+  try {
+    return dateObj.toLocaleString('es-BO', {
+      timeZone: 'America/La_Paz',
+      dateStyle: 'short',
+      timeStyle: 'short',
+    })
+  } catch {
+    return dateObj.toLocaleString('es-BO', { dateStyle: 'short', timeStyle: 'short' })
+  }
+}
+
+/**
  * Devuelve la fecha local en formato YYYY-MM-DD (sin desfase UTC).
  */
 export function getLocalDateStr(date = new Date()) {
