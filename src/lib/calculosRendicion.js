@@ -93,25 +93,127 @@ const isLuzFacturaCategoria = (cat) => /factura.*luz|^luz$/i.test(String(cat || 
 const isAguaFacturaCategoria = (cat) => /factura.*agua|^agua$/i.test(String(cat || '').trim())
 const isGuardiaCategoria = (cat) => /guardia/i.test(String(cat || '').trim())
 
-function matchesPeriodoDescripcion(descripcion, mes, anio) {
-  const txt = String(descripcion || '').toLowerCase()
-  if (!txt) return false
-  const mesNombre = (MESES[mes] || '').toLowerCase()
-  const mesPad = String(mes).padStart(2, '0')
-  return (
-    (mesNombre && txt.includes(`${mesNombre} ${anio}`)) ||
-    txt.includes(`${mesPad}/${anio}`) ||
-    txt.includes(`${mes}/${anio}`) ||
-    txt.includes(`${anio}-${mesPad}`)
-  )
+function detectExplicitMesAnio(descripcion, fechaFallback = null) {
+  const txt = String(descripcion || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+  if (!txt) return null
+
+  const nombres = MESES.slice(1).map((n) => n.toLowerCase())
+
+  // 1. Nombre de mes + año explícito (ej. "julio 2026", "agosto del 2026", "julio/2026")
+  for (let i = 0; i < nombres.length; i += 1) {
+    const mRegex = new RegExp(`\\b${nombres[i]}(?:\\s+(?:de|del))?[\\s/-]+(20\\d{2})\\b`)
+    const match = txt.match(mRegex)
+    if (match) {
+      return { mes: i + 1, anio: parseInt(match[1], 10) }
+    }
+  }
+
+  // 2. Formatos numéricos mm/yyyy o yyyy-mm
+  const numSlash = txt.match(/\b(0?[1-9]|1[0-2])\/(20\d{2})\b/)
+  if (numSlash) {
+    return { mes: parseInt(numSlash[1], 10), anio: parseInt(numSlash[2], 10) }
+  }
+  const isoMatch = txt.match(/\b(20\d{2})-(0?[1-9]|1[0-2])\b/)
+  if (isoMatch) {
+    return { mes: parseInt(isoMatch[2], 10), anio: parseInt(isoMatch[1], 10) }
+  }
+
+  // 3. Nombre de mes sin año (ej. "corresponde a julio", "factura julio")
+  for (let i = 0; i < nombres.length; i += 1) {
+    const mOnlyRegex = new RegExp(`\\b${nombres[i]}\\b`)
+    if (mOnlyRegex.test(txt)) {
+      const mes = i + 1
+      const f = parseFecha(fechaFallback)
+      let anio = f ? f.getFullYear() : new Date().getFullYear()
+      // Si se menciona diciembre en un pago realizado en enero, corresponde al año anterior
+      if (f && mes > f.getMonth() + 1 && mes - (f.getMonth() + 1) >= 6) {
+        anio -= 1
+      }
+      return { mes, anio }
+    }
+  }
+
+  return null
 }
 
-function hasAnyExplicitMesAnio(descripcion) {
-  const txt = String(descripcion || '').toLowerCase()
-  if (!txt) return false
-  const nombres = MESES.slice(1).map((n) => n.toLowerCase())
-  if (nombres.some((n) => new RegExp(`\\b${n}\\s+20\\d{2}\\b`).test(txt))) return true
-  return /\b(0?[1-9]|1[0-2])\/20\d{2}\b|\b20\d{2}-(0?[1-9]|1[0-2])\b/.test(txt)
+function resolverFacturaPeriodo({
+  pm,
+  egresoIdField,
+  categoriaFn,
+  estadoFields,
+  montoField,
+  fechaPagoField,
+  egresosServiciosActivos,
+  egresosById,
+  claimedEgresoIds,
+  explicitPeriodoByEgresoId,
+  mes,
+  anio,
+  dentroDelCorte,
+}) {
+  // Prioridad 1: Vínculo directo por egreso_luz_id / egreso_agua_id
+  const linkedId = pm?.[egresoIdField]
+  if (linkedId && egresosById.has(linkedId)) {
+    const eg = egresosById.get(linkedId)
+    claimedEgresoIds.add(eg.id)
+    return {
+      pagado: round2(parseFloat(eg.monto) || 0),
+      estado: 'Pagada',
+    }
+  }
+
+  // Prioridad 2: Detección por periodo en descripción (solo egresos aún no asignados a otro mes)
+  const candidates = egresosServiciosActivos.filter(
+    (e) => !claimedEgresoIds.has(e.id) && categoriaFn(e.categoria)
+  )
+
+  const explicitMatch = candidates.find((e) => {
+    const exp = explicitPeriodoByEgresoId.get(e.id)
+    return Boolean(exp && exp.mes === mes && exp.anio === anio)
+  })
+  if (explicitMatch) {
+    claimedEgresoIds.add(explicitMatch.id)
+    return {
+      pagado: round2(parseFloat(explicitMatch.monto) || 0),
+      estado: 'Pagada',
+    }
+  }
+
+  const fallbackDateMatch = candidates.find((e) => {
+    if (explicitPeriodoByEgresoId.get(e.id)) return false
+    const f = parseFecha(e.fecha)
+    return Boolean(f && f.getFullYear() === anio && f.getMonth() + 1 === mes)
+  })
+  if (fallbackDateMatch) {
+    claimedEgresoIds.add(fallbackDateMatch.id)
+    return {
+      pagado: round2(parseFloat(fallbackDateMatch.monto) || 0),
+      estado: 'Pagada',
+    }
+  }
+
+  // Prioridad 3: Fallback a factura_luz_bs / factura_agua_bs si ya está marcada como pagada
+  const estadoVal = estadoFields
+    .map((fld) => pm?.[fld])
+    .find((v) => v != null && String(v).trim() !== '')
+  const isMarkedPaid = ['pagada', 'pagado'].includes(String(estadoVal || '').toLowerCase())
+  const fechaPagoVal = fechaPagoField ? pm?.[fechaPagoField] : null
+  const montoFactura = parseFloat(pm?.[montoField]) || 0
+
+  if (isMarkedPaid && dentroDelCorte(fechaPagoVal) && montoFactura > 0) {
+    return {
+      pagado: round2(montoFactura),
+      estado: 'Pagada',
+    }
+  }
+
+  return {
+    pagado: 0,
+    estado: 'Pendiente de pago',
+  }
 }
 
 function buildBalanceMensualPorRubro({
@@ -174,8 +276,14 @@ function buildBalanceMensualPorRubro({
   )
   const egresosById = new Map(egresosServiciosActivos.map((e) => [e.id, e]))
   const claimedEgresoIds = new Set()
+  const explicitPeriodoByEgresoId = new Map()
 
-  // Pre-reclamar egresos vinculados por periodo (incluso fuera del rango visible) para evitar doble conteo en Otros
+  egresosServiciosActivos.forEach((e) => {
+    const exp = detectExplicitMesAnio(e.descripcion, e.fecha)
+    if (exp) explicitPeriodoByEgresoId.set(e.id, exp)
+  })
+
+  // Pre-reclamar egresos vinculados directamente en cualquier periodo o pago guardia
   ;(periodosMensuales || []).forEach((pm) => {
     if (pm.egreso_luz_id && egresosById.has(pm.egreso_luz_id)) claimedEgresoIds.add(pm.egreso_luz_id)
     if (pm.egreso_agua_id && egresosById.has(pm.egreso_agua_id)) claimedEgresoIds.add(pm.egreso_agua_id)
@@ -185,8 +293,8 @@ function buildBalanceMensualPorRubro({
     .forEach((pg) => claimedEgresoIds.add(pg.egreso_id))
 
   const matchesEgresoPeriodo = (e, mes, anio) => {
-    if (matchesPeriodoDescripcion(e.descripcion, mes, anio)) return true
-    if (hasAnyExplicitMesAnio(e.descripcion)) return false
+    const exp = explicitPeriodoByEgresoId.get(e.id)
+    if (exp) return exp.mes === mes && exp.anio === anio
     const f = parseFecha(e.fecha)
     return Boolean(f && f.getFullYear() === anio && f.getMonth() + 1 === mes)
   }
@@ -207,70 +315,46 @@ function buildBalanceMensualPorRubro({
 
     // 1. LUZ
     const luzCobrado = round2(ing.luzCobrado)
-    let luzPagado = 0
-    let luzEstado = 'Pendiente de pago'
-
-    if (pm?.egreso_luz_id && egresosById.has(pm.egreso_luz_id)) {
-      const egLuz = egresosById.get(pm.egreso_luz_id)
-      luzPagado = round2(parseFloat(egLuz.monto) || 0)
-      claimedEgresoIds.add(egLuz.id)
-      luzEstado = 'Pagada'
-    } else {
-      const egLuzMatches = egresosServiciosActivos.filter(
-        (e) => isLuzFacturaCategoria(e.categoria) && matchesEgresoPeriodo(e, mes, anio)
-      )
-      if (egLuzMatches.length > 0) {
-        luzPagado = round2(
-          egLuzMatches.reduce((s, e) => {
-            claimedEgresoIds.add(e.id)
-            return s + (parseFloat(e.monto) || 0)
-          }, 0)
-        )
-        luzEstado = 'Pagada'
-      } else if (
-        pm?.estado_pago_factura === 'pagada' &&
-        dentroDelCorte(pm.fecha_pago_factura) &&
-        (parseFloat(pm.factura_luz_bs) || 0) > 0
-      ) {
-        luzPagado = round2(parseFloat(pm.factura_luz_bs) || 0)
-        luzEstado = 'Pagada'
-      }
-    }
+    const luzRes = resolverFacturaPeriodo({
+      pm,
+      egresoIdField: 'egreso_luz_id',
+      categoriaFn: isLuzFacturaCategoria,
+      estadoFields: ['estado_pago_factura', 'estado_pago_luz'],
+      montoField: 'factura_luz_bs',
+      fechaPagoField: 'fecha_pago_factura',
+      egresosServiciosActivos,
+      egresosById,
+      claimedEgresoIds,
+      explicitPeriodoByEgresoId,
+      mes,
+      anio,
+      dentroDelCorte,
+    })
+    const luzPagado = luzRes.pagado
+    const luzEstado = luzRes.estado
     const luzSaldo = round2(luzCobrado - luzPagado)
 
     // 2. AGUA
     const aguaSocios = round2(ing.aguaSocios)
     const aguaExternos = round2(ing.aguaExternos)
     const aguaCobrado = round2(aguaSocios + aguaExternos)
-    let aguaPagado = 0
-    let aguaEstado = 'Pendiente de pago'
-
-    if (pm?.egreso_agua_id && egresosById.has(pm.egreso_agua_id)) {
-      const egAgua = egresosById.get(pm.egreso_agua_id)
-      aguaPagado = round2(parseFloat(egAgua.monto) || 0)
-      claimedEgresoIds.add(egAgua.id)
-      aguaEstado = 'Pagada'
-    } else {
-      const egAguaMatches = egresosServiciosActivos.filter(
-        (e) => isAguaFacturaCategoria(e.categoria) && matchesEgresoPeriodo(e, mes, anio)
-      )
-      if (egAguaMatches.length > 0) {
-        aguaPagado = round2(
-          egAguaMatches.reduce((s, e) => {
-            claimedEgresoIds.add(e.id)
-            return s + (parseFloat(e.monto) || 0)
-          }, 0)
-        )
-        aguaEstado = 'Pagada'
-      } else if (
-        pm?.estado_pago_agua === 'pagada' &&
-        dentroDelCorte(pm.fecha_pago_agua) &&
-        (parseFloat(pm.factura_agua_bs) || 0) > 0
-      ) {
-        aguaPagado = round2(parseFloat(pm.factura_agua_bs) || 0)
-        aguaEstado = 'Pagada'
-      }
-    }
+    const aguaRes = resolverFacturaPeriodo({
+      pm,
+      egresoIdField: 'egreso_agua_id',
+      categoriaFn: isAguaFacturaCategoria,
+      estadoFields: ['estado_pago_agua'],
+      montoField: 'factura_agua_bs',
+      fechaPagoField: 'fecha_pago_agua',
+      egresosServiciosActivos,
+      egresosById,
+      claimedEgresoIds,
+      explicitPeriodoByEgresoId,
+      mes,
+      anio,
+      dentroDelCorte,
+    })
+    const aguaPagado = aguaRes.pagado
+    const aguaEstado = aguaRes.estado
     const aguaSaldo = round2(aguaCobrado - aguaPagado)
 
     // 3. GUARDIA
@@ -322,8 +406,7 @@ function buildBalanceMensualPorRubro({
           ) {
             return false
           }
-          const f = parseFecha(e.fecha)
-          return Boolean(f && f.getFullYear() === anio && f.getMonth() + 1 === mes)
+          return matchesEgresoPeriodo(e, mes, anio)
         })
         .reduce((s, e) => s + (parseFloat(e.monto) || 0), 0)
     )
