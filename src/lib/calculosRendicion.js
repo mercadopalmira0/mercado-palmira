@@ -216,19 +216,39 @@ function resolverFacturaPeriodo({
   }
 }
 
-function buildBalanceMensualPorRubro({
+export function buildBalanceMensualPorRubro({
   mesesRango,
-  fechaLimiteFin,
+  mes = null,
+  anio = null,
+  fechaLimiteFin = null,
   periodosMensuales = [],
   pagosServicios = [],
   cobrosExternos = [],
   egresos = [],
   pagosGuardia = [],
 }) {
+  const rangoMeses =
+    Array.isArray(mesesRango) && mesesRango.length > 0
+      ? mesesRango
+      : mes && anio
+      ? buildMesesRango(mes, anio, mes, anio)
+      : []
+
+  let cutoffDate = fechaLimiteFin ? parseFechaEnd(fechaLimiteFin) || fechaLimiteFin : null
+  if (!cutoffDate && rangoMeses.length > 0) {
+    const ultimo = rangoMeses[rangoMeses.length - 1]
+    const nextMes = ultimo.mes === 12 ? 1 : ultimo.mes + 1
+    const nextAnio = ultimo.mes === 12 ? ultimo.anio + 1 : ultimo.anio
+    const next24 = new Date(nextAnio, nextMes - 1, 24, 23, 59, 59, 999)
+    const hoyEnd = new Date()
+    hoyEnd.setHours(23, 59, 59, 999)
+    cutoffDate = next24 > hoyEnd ? next24 : hoyEnd
+  }
+
   const dentroDelCorte = (fechaStr) => {
-    if (!fechaLimiteFin || !fechaStr) return true
+    if (!cutoffDate || !fechaStr) return true
     const f = parseFecha(fechaStr)
-    return !f || f <= fechaLimiteFin
+    return !f || f <= cutoffDate
   }
 
   // Agrupar cobros pagados por periodo al que pertenecen (no por fecha calendario de caja)
@@ -299,7 +319,7 @@ function buildBalanceMensualPorRubro({
     return Boolean(f && f.getFullYear() === anio && f.getMonth() + 1 === mes)
   }
 
-  return mesesRango.map((mInfo) => {
+  return rangoMeses.map((mInfo) => {
     const { mes, anio, key, label, shortLabel } = mInfo
     const ing = ingresosPorPeriodo.get(key) || {
       luzCobrado: 0,

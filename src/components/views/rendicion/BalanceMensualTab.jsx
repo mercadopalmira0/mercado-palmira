@@ -1,6 +1,17 @@
-import React from 'react'
-import { round2 } from '../../../lib/formatters'
-import { Zap, Droplets, Shield, Coins, BarChart3, Clock } from 'lucide-react'
+import React, { useState, useMemo } from 'react'
+import { MESES, round2 } from '../../../lib/formatters'
+import { buildBalanceMensualPorRubro } from '../../../lib/calculosRendicion'
+import {
+  Zap,
+  Droplets,
+  Shield,
+  Coins,
+  BarChart3,
+  Clock,
+  Calendar,
+  ChevronLeft,
+  ChevronRight,
+} from 'lucide-react'
 
 function formatSignedBs(valor) {
   const n = round2(parseFloat(valor) || 0)
@@ -15,8 +26,52 @@ function getSaldoColorClass(valor) {
   return 'text-slate-700'
 }
 
-export default function BalanceMensualTab({ consolidado }) {
-  const meses = consolidado?.balanceMensualPorRubro || []
+export default function BalanceMensualTab({
+  consolidado,
+  rawBalanceData,
+  defaultMes,
+  defaultAnio,
+}) {
+  const today = new Date()
+  const [filtrarUnMes, setFiltrarUnMes] = useState(false)
+  const [filtroMes, setFiltroMes] = useState(() => defaultMes || today.getMonth() + 1)
+  const [filtroAnio, setFiltroAnio] = useState(() => defaultAnio || today.getFullYear())
+
+  const stepMonth = (delta) => {
+    let nextM = filtroMes + delta
+    let nextY = filtroAnio
+    if (nextM < 1) {
+      nextM = 12
+      nextY -= 1
+    } else if (nextM > 12) {
+      nextM = 1
+      nextY += 1
+    }
+    setFiltroMes(nextM)
+    setFiltroAnio(nextY)
+  }
+
+  const meses = useMemo(() => {
+    if (!filtrarUnMes) {
+      return consolidado?.balanceMensualPorRubro || []
+    }
+    if (!rawBalanceData) {
+      return (consolidado?.balanceMensualPorRubro || []).filter(
+        (m) => m.mes === filtroMes && m.anio === filtroAnio
+      )
+    }
+    return buildBalanceMensualPorRubro({
+      mes: filtroMes,
+      anio: filtroAnio,
+      ...rawBalanceData,
+    })
+  }, [filtrarUnMes, filtroMes, filtroAnio, consolidado, rawBalanceData])
+
+  const yearOptions = useMemo(() => {
+    const base = [2024, 2025, 2026, 2027, 2028]
+    if (!base.includes(filtroAnio)) base.push(filtroAnio)
+    return base.sort((a, b) => a - b)
+  }, [filtroAnio])
 
   const acumulados = meses.reduce(
     (acc, m) => {
@@ -60,17 +115,101 @@ export default function BalanceMensualTab({ consolidado }) {
     }
   )
 
-  if (meses.length === 0) {
-    return (
-      <div className="bg-white rounded-2xl p-10 text-center border border-slate-200 text-xs text-slate-500">
-        No hay meses en el rango seleccionado para generar el Balance Mes a Mes.
-      </div>
-    )
-  }
-
   return (
     <div className="space-y-6">
-      {/* Resumen Rápido Superior (Totales Acumulados del Rango) */}
+      {/* Barra de Filtro Local (Mes Individual Activable) */}
+      <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-3 no-print">
+        <div className="flex flex-wrap items-center gap-3">
+          <button
+            type="button"
+            role="switch"
+            aria-checked={filtrarUnMes}
+            onClick={() => setFiltrarUnMes((prev) => !prev)}
+            className="inline-flex items-center gap-2.5 cursor-pointer select-none text-left"
+          >
+            <span
+              className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors ${
+                filtrarUnMes ? 'bg-indigo-600' : 'bg-slate-300'
+              }`}
+            >
+              <span
+                className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${
+                  filtrarUnMes ? 'translate-x-6' : 'translate-x-1'
+                }`}
+              />
+            </span>
+            <span className="text-xs sm:text-sm font-bold text-slate-900">
+              Filtrar un solo mes
+            </span>
+          </button>
+
+          {filtrarUnMes ? (
+            <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-indigo-100 text-indigo-800 border border-indigo-200">
+              Filtro individual activo: {MESES[filtroMes]} {filtroAnio}
+            </span>
+          ) : (
+            <span className="text-xs text-slate-500 italic">
+              Usando el rango general de arriba
+            </span>
+          )}
+        </div>
+
+        {filtrarUnMes && (
+          <div className="flex items-center gap-1.5 text-xs">
+            <Calendar className="w-4 h-4 text-indigo-600 hidden sm:block shrink-0" />
+            <button
+              type="button"
+              onClick={() => stepMonth(-1)}
+              title="Mes anterior"
+              className="p-2 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-700 transition-colors"
+            >
+              <ChevronLeft className="w-4 h-4" />
+            </button>
+
+            <div className="flex items-center bg-slate-50 border border-slate-200 rounded-xl px-2 py-1.5">
+              <select
+                value={filtroMes}
+                onChange={(e) => setFiltroMes(parseInt(e.target.value, 10))}
+                className="bg-transparent font-bold text-slate-800 pr-1.5 focus:outline-none"
+              >
+                {MESES.slice(1).map((m, i) => (
+                  <option key={i + 1} value={i + 1}>
+                    {m}
+                  </option>
+                ))}
+              </select>
+              <select
+                value={filtroAnio}
+                onChange={(e) => setFiltroAnio(parseInt(e.target.value, 10))}
+                className="bg-transparent font-bold text-slate-800 pl-1.5 border-l border-slate-200 focus:outline-none"
+              >
+                {yearOptions.map((y) => (
+                  <option key={y} value={y}>
+                    {y}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => stepMonth(1)}
+              title="Mes siguiente"
+              className="p-2 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-700 transition-colors"
+            >
+              <ChevronRight className="w-4 h-4" />
+            </button>
+          </div>
+        )}
+      </div>
+
+      {meses.length === 0 ? (
+        <div className="bg-white rounded-2xl p-10 text-center border border-slate-200 text-xs text-slate-500">
+          No hay meses en el rango seleccionado para generar el Balance Mes a Mes.
+        </div>
+      ) : (
+        <>
+          {/* Resumen Rápido Superior (Totales Acumulados del Rango) */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <div
           className={`bg-white rounded-2xl p-4 border shadow-sm ${
@@ -331,6 +470,8 @@ export default function BalanceMensualTab({ consolidado }) {
           )
         })}
       </div>
+        </>
+      )}
     </div>
   )
 }

@@ -45,6 +45,7 @@ export default function RendicionView() {
   const [fechaCorte, setFechaCorte] = useState(() => getDefaultFechaCorte(currentMonth, currentYear))
 
   const [consolidado, setConsolidado] = useState(null)
+  const [rawBalanceData, setRawBalanceData] = useState(null)
   const [periodosRango, setPeriodosRango] = useState([])
   const [cicloAbierto, setCicloAbierto] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -200,6 +201,13 @@ export default function RendicionView() {
         pagosGuardia: pagosGuardiaData || [],
       })
 
+      setRawBalanceData({
+        periodosMensuales: periodosData || [],
+        pagosServicios: pagosServiciosData || [],
+        cobrosExternos: cobrosExternosData || [],
+        egresos: egresosData || [],
+        pagosGuardia: pagosGuardiaData || [],
+      })
       setConsolidado(resultado)
     } catch (err) {
       console.error(err)
@@ -737,7 +745,12 @@ export default function RendicionView() {
           toggleExpandDeudor={toggleExpandDeudor}
         />
       ) : (
-        <BalanceMensualTab consolidado={consolidado} />
+        <BalanceMensualTab
+          consolidado={consolidado}
+          rawBalanceData={rawBalanceData}
+          defaultMes={mesFin}
+          defaultAnio={anioFin}
+        />
       )}
 
       {/* Modal Confirmación Cierre de Periodo y Arrastre de Ciclo */}
