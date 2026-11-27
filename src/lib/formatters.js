@@ -106,6 +106,21 @@ export function getPerdonazoVigente(campanias = [], fechaStr = getLocalDateStr()
 }
 
 /**
+ * Extrae de forma segura el nombre de socio de una unidad de cobro o objeto relacionado.
+ */
+function resolveUnidadSocioNombre(unidad) {
+  if (!unidad) return ''
+  const rel = Array.isArray(unidad.socios) ? unidad.socios[0] : unidad.socios
+  return (
+    rel?.nombre ||
+    unidad.socio?.nombre ||
+    unidad.socio_nombre ||
+    unidad.nombre_socio_historico ||
+    ''
+  )
+}
+
+/**
  * Formatea los puestos y nombres de un grupo de cobro para tarjetas, cobros y recibos.
  */
 export function formatResumenGrupo(unidadLider, miembros = [], nombreLiderOverride = null) {
@@ -115,10 +130,13 @@ export function formatResumenGrupo(unidadLider, miembros = [], nombreLiderOverri
       sociosLabel: nombreLiderOverride || 'Sin socio',
       esGrupo: false,
       miembrosCount: 1,
+      integrantesNombres: nombreLiderOverride ? [nombreLiderOverride] : [],
+      integrantesPuestos: [],
     }
   }
 
-  const liderNombre = nombreLiderOverride || unidadLider.socios?.nombre || 'Sin socio'
+  const liderNombre =
+    nombreLiderOverride || resolveUnidadSocioNombre(unidadLider) || 'Sin socio'
   const hijos = Array.isArray(miembros) ? miembros : []
 
   if (hijos.length === 0) {
@@ -129,6 +147,8 @@ export function formatResumenGrupo(unidadLider, miembros = [], nombreLiderOverri
         : liderNombre,
       esGrupo: (unidadLider.cantidad_puestos || 1) > 1,
       miembrosCount: unidadLider.cantidad_puestos || 1,
+      integrantesNombres: [liderNombre].filter((n) => n && n !== 'Sin socio'),
+      integrantesPuestos: unidadLider.numero_identificador ? [unidadLider.numero_identificador] : [],
     }
   }
 
@@ -140,7 +160,7 @@ export function formatResumenGrupo(unidadLider, miembros = [], nombreLiderOverri
 
   const otrosSocios = []
   hijos.forEach((h) => {
-    const n = h.socios?.nombre
+    const n = resolveUnidadSocioNombre(h)
     if (n && n !== liderNombre && !otrosSocios.includes(n)) {
       otrosSocios.push(n)
     }
@@ -149,10 +169,14 @@ export function formatResumenGrupo(unidadLider, miembros = [], nombreLiderOverri
   const sociosLabel =
     otrosSocios.length > 0 ? `${liderNombre} (+ ${otrosSocios.join(', ')})` : liderNombre
 
+  const integrantesNombres = [liderNombre, ...otrosSocios].filter((n) => n && n !== 'Sin socio')
+
   return {
     puestosLabel,
     sociosLabel,
     esGrupo: true,
     miembrosCount: 1 + hijos.length,
+    integrantesNombres,
+    integrantesPuestos: puestosRaw,
   }
 }

@@ -132,7 +132,7 @@ export default function CobrarView() {
         return
       }
 
-      const [{ data: cData, error: cError }, { data: hijosData }] = await Promise.all([
+      const [{ data: cData, error: cError }, { data: unidadesAllData }] = await Promise.all([
         supabase
           .from('cobros_servicios')
           .select(`
@@ -174,17 +174,18 @@ export default function CobrarView() {
           .order('created_at', { ascending: true }),
         supabase
           .from('unidades_cobro')
-          .select('id, grupo_padre_id, numero_identificador, socios (id, nombre)')
-          .not('grupo_padre_id', 'is', null),
+          .select('id, grupo_padre_id, numero_identificador, nombres_titulares, nombre_grupo, cantidad_puestos, socios (id, nombre)'),
       ])
 
       if (cError) throw cError
 
+      const unidadesById = {}
       const hijosPorPadre = {}
-      ;(hijosData || []).forEach((h) => {
-        if (h.grupo_padre_id) {
-          if (!hijosPorPadre[h.grupo_padre_id]) hijosPorPadre[h.grupo_padre_id] = []
-          hijosPorPadre[h.grupo_padre_id].push(h)
+      ;(unidadesAllData || []).forEach((u) => {
+        unidadesById[u.id] = u
+        if (u.grupo_padre_id) {
+          if (!hijosPorPadre[u.grupo_padre_id]) hijosPorPadre[u.grupo_padre_id] = []
+          hijosPorPadre[u.grupo_padre_id].push(u)
         }
       })
 
@@ -192,9 +193,20 @@ export default function CobrarView() {
         const pagosActivos = (cobro.pagos_servicios || []).filter((p) => p.estado === 'activo')
         const unidad = cobro.unidades_cobro
         const socio = unidad?.socios
-        const hijos = hijosPorPadre[cobro.unidad_id] || []
-        const nombreLider = getNombreSocioCobro(cobro)
-        const resumenGrupo = formatResumenGrupo(unidad, hijos, nombreLider)
+        // Si el cobro histórico quedó en una unidad que hoy es miembro de un grupo, resolver el grupo completo vía su líder actual
+        const unidadLiderEfectiva =
+          unidad?.grupo_padre_id && unidadesById[unidad.grupo_padre_id]
+            ? unidadesById[unidad.grupo_padre_id]
+            : unidad
+        const hijos = unidadLiderEfectiva ? hijosPorPadre[unidadLiderEfectiva.id] || [] : []
+        const esMiembroDeGrupoActual = Boolean(
+          unidad?.grupo_padre_id && unidadLiderEfectiva && unidadLiderEfectiva.id !== unidad.id
+        )
+        const nombreLider = esMiembroDeGrupoActual
+          ? unidadLiderEfectiva?.socios?.nombre || getNombreSocioCobro(cobro)
+          : getNombreSocioCobro(cobro)
+        const resumenGrupo = formatResumenGrupo(unidadLiderEfectiva, hijos, nombreLider)
+        const nombreGrupoEfectivo = unidadLiderEfectiva?.nombre_grupo || unidad?.nombre_grupo || ''
 
         const montoFijoPers =
           cobro.modalidad_aplicada === 'personalizado'
@@ -243,6 +255,7 @@ export default function CobrarView() {
           ...desglose,
           pagosActivos,
           resumenGrupo,
+          nombreGrupoEfectivo,
         }
       })
 
@@ -737,7 +750,10 @@ export default function CobrarView() {
     const tarifadorCode = c.unidades_cobro?.codigo_tarifador?.toLowerCase() || ''
     const grupoPuestos = c.resumenGrupo?.puestosLabel?.toLowerCase() || ''
     const grupoSocios = c.resumenGrupo?.sociosLabel?.toLowerCase() || ''
-    const nombreGrupo = c.unidades_cobro?.nombre_grupo?.toLowerCase() || ''
+    const nombreGrupo = (c.nombreGrupoEfectivo || c.unidades_cobro?.nombre_grupo || '').toLowerCase()
+    const integrantesMatch =
+      (c.resumenGrupo?.integrantesNombres || []).some((n) => n.toLowerCase().includes(term)) ||
+      (c.resumenGrupo?.integrantesPuestos || []).some((p) => p.toLowerCase().includes(term))
 
     const matchesSearch =
       !term ||
@@ -746,7 +762,8 @@ export default function CobrarView() {
       tarifadorCode.includes(term) ||
       grupoPuestos.includes(term) ||
       grupoSocios.includes(term) ||
-      nombreGrupo.includes(term)
+      nombreGrupo.includes(term) ||
+      integrantesMatch
     if (!matchesSearch) return false
 
     if (filterEstado === 'pendiente') return c.estado === 'pendiente'
@@ -1358,10 +1375,10 @@ export default function CobrarView() {
                               <h4 className="font-bold text-sm sm:text-base text-slate-900 truncate">
                                 {cobro.resumenGrupo?.esGrupo ? cobro.resumenGrupo.sociosLabel : nombreSocio}
                               </h4>
-                              {unidad?.nombre_grupo && (
+                              {(cobro.nombreGrupoEfectivo || unidad?.nombre_grupo) && (
                                 <span className="text-[10px] px-2 py-0.5 bg-purple-100 text-purple-800 rounded font-bold inline-flex items-center gap-1">
                                   <Layers className="w-3 h-3" />
-                                  {unidad.nombre_grupo}
+                                  {cobro.nombreGrupoEfectivo || unidad.nombre_grupo}
                                 </span>
                               )}
                               {cobro.nombre_socio_historico && (

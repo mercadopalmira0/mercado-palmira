@@ -1005,7 +1005,9 @@ export default function SociosView() {
                 const esLiderGrupo = Boolean(unidad && !unidad.grupo_padre_id && (hijos.length > 0 || (unidad.cantidad_puestos || 1) > 1))
                 const esMiembroGrupo = Boolean(unidad?.grupo_padre_id)
                 const unidadLiderObj = esMiembroGrupo ? allUnidadesMap[unidad.grupo_padre_id] : null
-                const resumenGrupo = esLiderGrupo ? formatResumenGrupo(unidad, hijos) : null
+                const resumenGrupo = esLiderGrupo
+                  ? formatResumenGrupo(allUnidadesMap[unidad.id] || unidad, hijos, socio.nombre)
+                  : null
                 const menuOpen = openMenuSocioId === socio.id
 
                 return (

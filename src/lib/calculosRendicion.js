@@ -674,13 +674,15 @@ function buildMesesRango(mesInicio, anioInicio, mesFin, anioFin) {
   return result
 }
 
-function buildMatrizPeriodo({
-  mesesRango,
-  unidadesActivas,
-  aportantesExternos,
-  cobrosEnRango,
-  cobrosExternos,
+export function buildMatrizPeriodo({
+  mesesRango = [],
+  unidadesActivas = [],
+  aportantesExternos = [],
+  cobrosEnRango = null,
+  cobrosServicios = [],
+  cobrosExternos = [],
 }) {
+  const listaCobros = cobrosEnRango || cobrosServicios || []
   const hijosPorPadre = {}
   unidadesActivas.forEach((u) => {
     if (u.grupo_padre_id) {
@@ -697,7 +699,7 @@ function buildMatrizPeriodo({
   const cobrosSociosMap = new Map()
   const mesesConCobros = new Set()
 
-  cobrosEnRango.forEach((c) => {
+  listaCobros.forEach((c) => {
     const p = c.periodos_mensuales
     if (!p) return
     const keyMes = `${p.anio}-${String(p.mes).padStart(2, '0')}`
@@ -765,15 +767,24 @@ function buildMatrizPeriodo({
           : u.nombres_titulares || `${titular} (${puestosGrupo.length} puestos)`
     }
 
+    const idsDelGrupo = [u.id, ...hijos.map((h) => h.id)]
     const pagosPorMes = {}
     let totalPagado = 0
     let totalEsperado = 0
 
     mesesRango.forEach((m) => {
-      const cell = cobrosSociosMap.get(`${u.id}|${m.key}`) || { pagado: 0, esperado: 0 }
-      pagosPorMes[m.key] = round2(cell.pagado)
-      totalPagado += cell.pagado
-      totalEsperado += cell.esperado
+      let pagadoMes = 0
+      let esperadoMes = 0
+      idsDelGrupo.forEach((uid) => {
+        const cell = cobrosSociosMap.get(`${uid}|${m.key}`)
+        if (cell) {
+          pagadoMes += cell.pagado
+          esperadoMes += cell.esperado
+        }
+      })
+      pagosPorMes[m.key] = round2(pagadoMes)
+      totalPagado += pagadoMes
+      totalEsperado += esperadoMes
     })
 
     totalPagado = round2(totalPagado)
