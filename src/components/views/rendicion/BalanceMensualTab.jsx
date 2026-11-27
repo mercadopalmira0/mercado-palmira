@@ -1,6 +1,9 @@
 import React, { useState, useMemo } from 'react'
-import { MESES, round2 } from '../../../lib/formatters'
-import { buildBalanceMensualPorRubro } from '../../../lib/calculosRendicion'
+import { MESES, round2, formatFechaDMY } from '../../../lib/formatters'
+import {
+  buildBalanceMensualPorRubro,
+  buildRecuperacionBloquesAnteriores,
+} from '../../../lib/calculosRendicion'
 import {
   Zap,
   Droplets,
@@ -11,6 +14,7 @@ import {
   Calendar,
   ChevronLeft,
   ChevronRight,
+  History,
 } from 'lucide-react'
 
 function formatSignedBs(valor) {
@@ -63,6 +67,28 @@ export default function BalanceMensualTab({
     return buildBalanceMensualPorRubro({
       mes: filtroMes,
       anio: filtroAnio,
+      ...rawBalanceData,
+    })
+  }, [filtrarUnMes, filtroMes, filtroAnio, consolidado, rawBalanceData])
+
+  const recuperacion = useMemo(() => {
+    if (!filtrarUnMes) {
+      return (
+        consolidado?.recuperacionBloquesAnteriores || {
+          items: [],
+          totalRecuperado: 0,
+          cantidadPagos: 0,
+        }
+      )
+    }
+    if (!rawBalanceData) {
+      return { items: [], totalRecuperado: 0, cantidadPagos: 0 }
+    }
+    return buildRecuperacionBloquesAnteriores({
+      mesInicio: filtroMes,
+      anioInicio: filtroAnio,
+      mesFin: filtroMes,
+      anioFin: filtroAnio,
       ...rawBalanceData,
     })
   }, [filtrarUnMes, filtroMes, filtroAnio, consolidado, rawBalanceData])
@@ -510,6 +536,78 @@ export default function BalanceMensualTab({
             </div>
           )
         })}
+      </div>
+
+      {/* Bloque Independiente: Recuperación de Deudores (Bloques Anteriores) */}
+      <div className="bg-white rounded-2xl border border-indigo-200 shadow-sm overflow-hidden break-inside-avoid">
+        <div className="px-5 py-3.5 bg-indigo-50/70 border-b border-indigo-200 flex flex-wrap items-center justify-between gap-2">
+          <div className="space-y-0.5">
+            <h3 className="text-sm sm:text-base font-extrabold text-indigo-950 flex items-center gap-2">
+              <History className="w-4 h-4 text-indigo-600 shrink-0" />
+              <span>Recuperación de Deudores (Bloques Anteriores)</span>
+            </h3>
+            <p className="text-[11px] text-indigo-800">
+              Cobros de gestiones o periodos anteriores recibidos durante este rango (no se mezclan con el ahorro mensual individual).
+            </p>
+          </div>
+          <span className="px-3 py-1 rounded-full text-xs font-extrabold font-mono bg-indigo-600 text-white shadow-sm">
+            Total Recuperado: {round2(recuperacion.totalRecuperado || 0).toFixed(2)} Bs
+          </span>
+        </div>
+
+        {(recuperacion.items || []).length === 0 ? (
+          <div className="p-6 text-center text-xs text-slate-500">
+            Total Recuperado: <strong className="font-mono text-slate-700">0.00 Bs</strong> — No se registraron pagos de bloques o periodos anteriores en este rango.
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs text-left border-collapse min-w-[540px]">
+              <thead>
+                <tr className="bg-slate-100 text-slate-600 font-bold border-b border-slate-200">
+                  <th className="py-2.5 px-4">Fecha</th>
+                  <th className="py-2.5 px-4">Socio / Puesto</th>
+                  <th className="py-2.5 px-4">Concepto / Periodo Adeudado</th>
+                  <th className="py-2.5 px-4 text-right">Monto (Bs)</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {recuperacion.items.map((it) => (
+                  <tr key={it.id} className="hover:bg-slate-50/70">
+                    <td className="py-2.5 px-4 font-mono text-slate-600 whitespace-nowrap">
+                      {it.fecha ? formatFechaDMY(it.fecha) : '-'}
+                    </td>
+                    <td className="py-2.5 px-4">
+                      <span className="font-bold text-slate-900 block">{it.persona}</span>
+                      {it.puesto && it.puesto !== '-' && (
+                        <span className="text-[11px] text-slate-500">{it.puesto}</span>
+                      )}
+                    </td>
+                    <td className="py-2.5 px-4 text-slate-700">
+                      <span className="font-medium block">{it.concepto}</span>
+                      <span className="inline-block mt-0.5 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-slate-100 text-slate-600">
+                        {it.tipo} • {it.metodo === 'qr' ? 'QR' : 'Efectivo'}
+                      </span>
+                    </td>
+                    <td className="py-2.5 px-4 text-right font-mono font-extrabold text-indigo-700 whitespace-nowrap">
+                      +{it.monto.toFixed(2)} Bs
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr className="bg-indigo-950 text-white font-bold">
+                  <td colSpan={3} className="py-3 px-4 uppercase tracking-wider text-[11px]">
+                    TOTAL RECUPERADO BLOQUES ANTERIORES ({recuperacion.cantidadPagos}{' '}
+                    {recuperacion.cantidadPagos === 1 ? 'pago' : 'pagos'})
+                  </td>
+                  <td className="py-3 px-4 text-right font-mono text-sm font-black text-emerald-300">
+                    +{round2(recuperacion.totalRecuperado || 0).toFixed(2)} Bs
+                  </td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        )}
       </div>
         </>
       )}

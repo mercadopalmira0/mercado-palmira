@@ -549,6 +549,24 @@ export function descargarRendicionExcel(consolidado, metadata = {}) {
     )
   })
 
+  const recBloques = consolidado.recuperacionBloquesAnteriores || {
+    items: [],
+    totalRecuperado: 0,
+    cantidadPagos: 0,
+  }
+  const recItems = recBloques.items || []
+  const recRows =
+    recItems.length > 0
+      ? recItems.map((it) => [
+          it.fecha ? formatFechaDMY(it.fecha) : '',
+          it.tipo || '',
+          `${it.persona}${it.puesto && it.puesto !== '-' ? ` (${it.puesto})` : ''}`,
+          it.concepto || '',
+          it.metodo === 'qr' ? 'QR / Banco' : 'Efectivo',
+          round2(it.monto),
+        ])
+      : [['Sin pagos en este rango', '', '', '', '', 0]]
+
   const balanceAoa = [
     ['SECRETARÍA DE HACIENDA - MERCADO PALMIRA'],
     [`BALANCE MES A MES POR RUBRO (LUZ, AGUA Y GUARDIA) — ${labels.mesInicio}/${labels.anioInicio} a ${labels.mesFin}/${labels.anioFin}`],
@@ -564,6 +582,11 @@ export function descargarRendicionExcel(consolidado, metadata = {}) {
     ['ACUMULADO RANGO', 'Guardia', '', totBal.guardiaC, totBal.guardiaP, totBal.guardiaS],
     ['ACUMULADO RANGO', 'Multas / Otros Operativos', '', totBal.otrosC, totBal.otrosP, totBal.otrosS],
     ['TOTAL GENERAL DEL RANGO', 'SOBRANTE / DÉFICIT NETO', '', totBal.totalC, totBal.totalP, totBal.sobranteNeto],
+    [],
+    ['BLOQUE INDEPENDIENTE: RECUPERACIÓN DE DEUDORES (BLOQUES ANTERIORES)'],
+    ['Fecha Pago', 'Tipo / Origen', 'Socio / Puesto', 'Concepto / Periodo Adeudado', 'Método', 'Monto Recuperado (Bs)'],
+    ...recRows,
+    ['TOTAL RECUPERADO (BLOQUES ANTERIORES)', `${recItems.length} pagos`, '', '', '', round2(recBloques.totalRecuperado || 0)],
   ]
 
   const wsBalance = XLSX.utils.aoa_to_sheet(balanceAoa)

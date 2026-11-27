@@ -456,21 +456,7 @@ export function buildBalanceMensualPorRubro({
           .reduce((s, p) => s + (parseFloat(p.monto) || 0), 0)
       )
 
-      const cicloInicial = (ciclosHacienda || []).find((c) => c.es_inicial) || null
-      let saldoAnteriorLuzAgua = 0
-      if (cicloInicial) {
-        const sumCiclo = round2(
-          (parseFloat(cicloInicial.servicios_efectivo_inicial) || 0) +
-            (parseFloat(cicloInicial.servicios_qr_inicial) || 0)
-        )
-        saldoAnteriorLuzAgua = sumCiclo > 0 ? sumCiclo : 1550
-      } else if ((saldosIniciales || []).length > 0) {
-        saldoAnteriorLuzAgua = round2(
-          (saldosIniciales || [])
-            .filter((s) => s.caja === 'servicios')
-            .reduce((acc, s) => acc + (parseFloat(s.monto_inicial) || 0), 0)
-        )
-      }
+      const saldoAnteriorLuzAgua = 1550
 
       const totalTransicion = round2(cobrosDeudoresJunio + saldoAnteriorLuzAgua)
       transicion = {
@@ -529,6 +515,138 @@ export function buildBalanceMensualPorRubro({
       sobranteNeto,
     }
   })
+}
+
+export function buildRecuperacionBloquesAnteriores({
+  mesInicio,
+  anioInicio,
+  mesFin,
+  anioFin,
+  fechaLimiteInicio = null,
+  fechaLimiteFin = null,
+  cobrosServicios = [],
+  pagosServicios = [],
+  cobrosExternos = [],
+  pagosDeudoresCiclos = [],
+}) {
+  const rangoMeses = buildMesesRango(mesInicio, anioInicio, mesFin || mesInicio, anioFin || anioInicio)
+  const periodoInicioDate = new Date(anioInicio, mesInicio - 1, 1, 0, 0, 0, 0)
+  const winInicio = fechaLimiteInicio
+    ? parseFechaStart(fechaLimiteInicio) || fechaLimiteInicio
+    : periodoInicioDate
+
+  let winFin = fechaLimiteFin ? parseFechaEnd(fechaLimiteFin) || fechaLimiteFin : null
+  if (!winFin && rangoMeses.length > 0) {
+    const ultimo = rangoMeses[rangoMeses.length - 1]
+    const nextMes = ultimo.mes === 12 ? 1 : ultimo.mes + 1
+    const nextAnio = ultimo.mes === 12 ? ultimo.anio + 1 : ultimo.anio
+    const next24 = new Date(nextAnio, nextMes - 1, 24, 23, 59, 59, 999)
+    const hoyEnd = new Date()
+    hoyEnd.setHours(23, 59, 59, 999)
+    winFin = next24 > hoyEnd ? next24 : hoyEnd
+  }
+
+  const enVentanaBloque = (fechaStr) => {
+    const f = parseFecha(fechaStr)
+    if (!f) return false
+    if (winInicio && f < winInicio) return false
+    if (winFin && f > winFin) return false
+    return true
+  }
+
+  const tieneCobrosPropiosJunio = (cobrosServicios || []).some(
+    (c) => Number(c.periodos_mensuales?.mes) === 6 && Number(c.periodos_mensuales?.anio) === 2026
+  )
+  const incluyeJunioTransicion =
+    !tieneCobrosPropiosJunio && rangoMeses.some((m) => m.mes === 6 && m.anio === 2026)
+
+  const items = []
+
+  // 1. Pagos de deudores de ciclos anteriores / heredados (Caja Servicios) dentro de la ventana actual
+  ;(pagosDeudoresCiclos || []).forEach((p) => {
+    if (p.anulado || !enVentanaBloque(p.fecha_pago)) return
+    const cajaDeuda = p.deudores_ciclos?.caja || p.caja || 'servicios'
+    if (cajaDeuda !== 'servicios') return
+    const origenDeuda = p.deudores_ciclos?.origen || 'tesorero_anterior'
+    // Evitar doble conteo con la fila de transición de Junio 2026 cuando Junio está en el rango
+    if (incluyeJunioTransicion && origenDeuda === 'tesorero_anterior') return
+
+    const monto = round2(parseFloat(p.monto) || 0)
+    if (monto <= 0) return
+
+    items.push({
+      id: `pdc-${p.id}`,
+      fuente: 'deudores_ciclos',
+      tipo: origenDeuda === 'tesorero_anterior' ? 'Deuda Gestión Anterior' : 'Deuda Cierre de Ciclo',
+      fecha: p.fecha_pago || '',
+      persona: p.deudores_ciclos?.nombre_deudor || 'Deudor',
+      puesto: p.deudores_ciclos?.puesto_referencia || '-',
+      concepto:
+        p.deudores_ciclos?.detalle_deuda ||
+        (origenDeuda === 'tesorero_anterior' ? 'Deuda anterior' : 'Saldo cierre de ciclo'),
+      metodo: p.metodo_pago || 'efectivo',
+      monto,
+    })
+  })
+
+  // 2. Pagos de servicios mensuales cobrados en la ventana actual cuyo periodo sea anterior a mesInicio/anioInicio
+  ;(pagosServicios || []).forEach((p) => {
+    if (p.estado !== 'activo' || !enVentanaBloque(p.fecha_pago)) return
+    const pm = p.cobros_servicios?.periodos_mensuales
+    if (!pm?.mes || !pm?.anio) return
+    const pDate = new Date(pm.anio, pm.mes - 1, 1, 0, 0, 0, 0)
+    if (pDate >= periodoInicioDate) return
+
+    const monto = round2(parseFloat(p.monto) || 0)
+    if (monto <= 0) return
+
+    items.push({
+      id: `ps-rec-${p.id}`,
+      fuente: 'pagos_servicios',
+      tipo: 'Servicio Mes Anterior',
+      fecha: p.fecha_pago || '',
+      persona: getNombreSocioCobro(p.cobros_servicios),
+      puesto: p.cobros_servicios?.unidades_cobro?.numero_identificador || '-',
+      concepto: `Servicio ${MESES[pm.mes] || pm.mes} ${pm.anio}`,
+      metodo: p.metodo_pago || 'efectivo',
+      monto,
+    })
+  })
+
+  // 3. Cobros externos cobrados en la ventana actual cuyo periodo sea anterior a mesInicio/anioInicio
+  ;(cobrosExternos || []).forEach((c) => {
+    if (c.anulado || !enVentanaBloque(c.fecha_pago)) return
+    if (!c.mes || !c.anio) return
+    const cDate = new Date(c.anio, c.mes - 1, 1, 0, 0, 0, 0)
+    if (cDate >= periodoInicioDate) return
+
+    const monto = round2(parseFloat(c.monto_pagado) || 0)
+    if (monto <= 0) return
+
+    items.push({
+      id: `ext-rec-${c.id}`,
+      fuente: 'cobros_externos',
+      tipo: 'Externo Mes Anterior',
+      fecha: c.fecha_pago || '',
+      persona: c.aportantes_externos?.nombre_completo || 'Aportante Externo',
+      puesto: c.aportantes_externos?.referencia_ubicacion || 'Externo',
+      concepto: `Externo ${MESES[c.mes] || c.mes} ${c.anio}`,
+      metodo: c.metodo_pago || 'efectivo',
+      monto,
+    })
+  })
+
+  items.sort(
+    (a, b) =>
+      String(b.fecha || '').localeCompare(String(a.fecha || '')) ||
+      String(a.persona || '').localeCompare(String(b.persona || ''), 'es')
+  )
+
+  return {
+    items,
+    totalRecuperado: round2(items.reduce((s, it) => s + it.monto, 0)),
+    cantidadPagos: items.length,
+  }
 }
 
 function buildMesesRango(mesInicio, anioInicio, mesFin, anioFin) {
@@ -1700,6 +1818,19 @@ export function calcularConsolidadoRendicion({
     pagosGuardia,
   })
 
+  const recuperacionBloquesAnteriores = buildRecuperacionBloquesAnteriores({
+    mesInicio,
+    anioInicio,
+    mesFin,
+    anioFin,
+    fechaLimiteInicio,
+    fechaLimiteFin,
+    cobrosServicios,
+    pagosServicios,
+    cobrosExternos,
+    pagosDeudoresCiclos,
+  })
+
   const resumenCobrosExtras = (cobrosExtrasCampanas || [])
     .filter((camp) => {
       if (camp.estado === 'anulada') return false
@@ -1849,6 +1980,7 @@ export function calcularConsolidadoRendicion({
     matrizPeriodo,
     matrizDeudores,
     balanceMensualPorRubro,
+    recuperacionBloquesAnteriores,
     resumenCobrosExtras,
   }
 }

@@ -134,7 +134,7 @@ export default function RendicionView() {
         `),
         supabase.from('pagos_deudores_ciclos').select(`
           id, monto, metodo_pago, fecha_pago, anulado, nro_talonario_fisico,
-          deudores_ciclos (caja, origen, nombre_deudor)
+          deudores_ciclos (caja, origen, nombre_deudor, detalle_deuda, puesto_referencia)
         `),
         supabase.from('cobros_externos').select(`
           id, externo_id, anio, mes, monto_correspondiente, monto_pagado, monto_guardia, monto_agua, es_monto_editado, metodo_pago, nro_talonario_fisico, fecha_pago, anulado,
