@@ -488,7 +488,74 @@ export function descargarRendicionExcel(consolidado, metadata = {}) {
   wsDeudores['!cols'] = [{ wch: 26 }, { wch: 24 }, { wch: 14 }, { wch: 40 }, { wch: 24 }, { wch: 17 }, { wch: 15 }, { wch: 17 }, { wch: 13 }]
   XLSX.utils.book_append_sheet(wb, wsDeudores, 'Deudores_Mora')
 
-  // 7 y 8. Hojas Matriz_Cobranza y Deudores_Consolidado
+  // 7. Hoja Balance_Mes_a_Mes
+  const balanceMeses = consolidado.balanceMensualPorRubro || []
+  const balanceRows = []
+  const totBal = {
+    luzC: 0,
+    luzP: 0,
+    luzS: 0,
+    aguaC: 0,
+    aguaP: 0,
+    aguaS: 0,
+    guardiaC: 0,
+    guardiaP: 0,
+    guardiaS: 0,
+    otrosC: 0,
+    otrosP: 0,
+    otrosS: 0,
+    totalC: 0,
+    totalP: 0,
+    sobranteNeto: 0,
+  }
+
+  balanceMeses.forEach((m) => {
+    totBal.luzC = round2(totBal.luzC + m.luz.cobrado)
+    totBal.luzP = round2(totBal.luzP + m.luz.pagado)
+    totBal.luzS = round2(totBal.luzS + m.luz.saldo)
+    totBal.aguaC = round2(totBal.aguaC + m.agua.cobrado)
+    totBal.aguaP = round2(totBal.aguaP + m.agua.pagado)
+    totBal.aguaS = round2(totBal.aguaS + m.agua.saldo)
+    totBal.guardiaC = round2(totBal.guardiaC + m.guardia.cobrado)
+    totBal.guardiaP = round2(totBal.guardiaP + m.guardia.pagado)
+    totBal.guardiaS = round2(totBal.guardiaS + m.guardia.saldo)
+    totBal.otrosC = round2(totBal.otrosC + m.otros.cobrado)
+    totBal.otrosP = round2(totBal.otrosP + m.otros.pagado)
+    totBal.otrosS = round2(totBal.otrosS + m.otros.saldo)
+    totBal.totalC = round2(totBal.totalC + m.totalCobrado)
+    totBal.totalP = round2(totBal.totalP + m.totalPagado)
+    totBal.sobranteNeto = round2(totBal.sobranteNeto + m.sobranteNeto)
+
+    balanceRows.push(
+      [m.label, 'Luz (Grupo Luz)', m.luz.pendiente ? 'Factura pendiente de pago' : 'Pagada', round2(m.luz.cobrado), round2(m.luz.pagado), round2(m.luz.saldo)],
+      [m.label, 'Agua', `Socios: ${m.agua.cobradoSocios.toFixed(2)} + Ext: ${m.agua.cobradoExternos.toFixed(2)}${m.agua.pendiente ? ' (Pendiente)' : ''}`, round2(m.agua.cobrado), round2(m.agua.pagado), round2(m.agua.saldo)],
+      [m.label, 'Guardia', `Socios: ${m.guardia.cobradoSocios.toFixed(2)} + Ext: ${m.guardia.cobradoExternos.toFixed(2)}`, round2(m.guardia.cobrado), round2(m.guardia.pagado), round2(m.guardia.saldo)],
+      [m.label, 'Multas / Otros Operativos', 'Multas vs egresos operativos Caja Servicios', round2(m.otros.cobrado), round2(m.otros.pagado), round2(m.otros.saldo)],
+      [m.label, `TOTAL ${m.label.toUpperCase()}`, '', round2(m.totalCobrado), round2(m.totalPagado), round2(m.sobranteNeto)],
+      []
+    )
+  })
+
+  const balanceAoa = [
+    ['SECRETARÍA DE HACIENDA - MERCADO PALMIRA'],
+    [`BALANCE MES A MES POR RUBRO (LUZ, AGUA Y GUARDIA) — ${labels.mesInicio}/${labels.anioInicio} a ${labels.mesFin}/${labels.anioFin}`],
+    [`Fecha de Corte de Caja: ${labels.fechaCorteLabel} | Emisión: ${labels.fechaEmision}`],
+    [],
+    ['Mes / Periodo', 'Rubro', 'Detalle / Estado', 'Cobrado (Bs)', 'Pagado (Bs)', 'Sobrante / Déficit (Bs)'],
+    ...balanceRows,
+    ['ACUMULADO RANGO', 'Luz (Grupo Luz)', '', totBal.luzC, totBal.luzP, totBal.luzS],
+    ['ACUMULADO RANGO', 'Agua', '', totBal.aguaC, totBal.aguaP, totBal.aguaS],
+    ['ACUMULADO RANGO', 'Guardia', '', totBal.guardiaC, totBal.guardiaP, totBal.guardiaS],
+    ['ACUMULADO RANGO', 'Multas / Otros Operativos', '', totBal.otrosC, totBal.otrosP, totBal.otrosS],
+    ['TOTAL GENERAL DEL RANGO', 'SOBRANTE / DÉFICIT NETO', '', totBal.totalC, totBal.totalP, totBal.sobranteNeto],
+  ]
+
+  const wsBalance = XLSX.utils.aoa_to_sheet(balanceAoa)
+  formatMoneyColumns(wsBalance, [3, 4, 5], 5)
+  wsBalance['!cols'] = [{ wch: 24 }, { wch: 28 }, { wch: 42 }, { wch: 16 }, { wch: 16 }, { wch: 22 }]
+  XLSX.utils.book_append_sheet(wb, wsBalance, 'Balance_Mes_a_Mes')
+
+  // 8 y 9. Hojas Matriz_Cobranza y Deudores_Consolidado
   appendMatricesSheets(wb, consolidado, labels)
 
   const fileName = `Rendicion_Cuentas_Palmira_${labels.mesInicio}-${labels.anioInicio}_a_${labels.mesFin}-${labels.anioFin}.xlsx`

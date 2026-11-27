@@ -37,6 +37,343 @@ function formatPuestoCorto(ident) {
   return String(ident || '').replace(/^puesto\s+/i, '').trim()
 }
 
+function extraerDesglosePagoServicio(p) {
+  const m = parseFloat(p.monto) || 0
+  if (m <= 0) return { guardia: 0, agua: 0, luz: 0, multa: 0 }
+
+  const c = p.cobros_servicios || {}
+  let g = parseFloat(c.monto_guardia)
+  let a = parseFloat(c.monto_agua)
+  let l = parseFloat(c.monto_luz_grupo)
+
+  if (!Number.isFinite(g) || !Number.isFinite(a) || !Number.isFinite(l)) {
+    const baseCalc = calcularDesgloseRubrosBase({
+      cantidadPuestos: c.cantidad_puestos_aplicada || 1,
+      montoBase: parseFloat(c.monto_base) || 0,
+      montoLuzRedondeado: parseFloat(c.monto_luz_redondeado) || 0,
+    })
+    if (!Number.isFinite(g)) g = baseCalc.montoGuardia
+    if (!Number.isFinite(a)) a = baseCalc.montoAgua
+    if (!Number.isFinite(l)) l = baseCalc.montoLuzGrupo
+  }
+
+  const sumRubros = Math.max(0, g + a + l)
+  const totalCobro = Math.max(parseFloat(c.total_a_pagar) || 0, sumRubros)
+  if (totalCobro > 0) {
+    const ratio = m / totalCobro
+    return {
+      guardia: g * ratio,
+      agua: a * ratio,
+      luz: l * ratio,
+      multa: Math.max(0, totalCobro - sumRubros) * ratio,
+    }
+  }
+  return { guardia: m, agua: 0, luz: 0, multa: 0 }
+}
+
+function extraerDesgloseCobroExterno(c) {
+  const m = parseFloat(c.monto_pagado) || 0
+  if (m <= 0) return { guardia: 0, agua: 0 }
+
+  const g = parseFloat(c.monto_guardia)
+  const a = parseFloat(c.monto_agua)
+  if (Number.isFinite(g) || Number.isFinite(a)) {
+    const gg = Number.isFinite(g) ? g : 0
+    const aa = Number.isFinite(a) ? a : 0
+    const s = gg + aa
+    if (s > 0 && Math.abs(s - m) > 0.01) {
+      return { guardia: (gg / s) * m, agua: (aa / s) * m }
+    }
+    return { guardia: gg, agua: aa }
+  }
+  return { guardia: m * 0.8, agua: m * 0.2 }
+}
+
+const isLuzFacturaCategoria = (cat) => /factura.*luz|^luz$/i.test(String(cat || '').trim())
+const isAguaFacturaCategoria = (cat) => /factura.*agua|^agua$/i.test(String(cat || '').trim())
+const isGuardiaCategoria = (cat) => /guardia/i.test(String(cat || '').trim())
+
+function matchesPeriodoDescripcion(descripcion, mes, anio) {
+  const txt = String(descripcion || '').toLowerCase()
+  if (!txt) return false
+  const mesNombre = (MESES[mes] || '').toLowerCase()
+  const mesPad = String(mes).padStart(2, '0')
+  return (
+    (mesNombre && txt.includes(`${mesNombre} ${anio}`)) ||
+    txt.includes(`${mesPad}/${anio}`) ||
+    txt.includes(`${mes}/${anio}`) ||
+    txt.includes(`${anio}-${mesPad}`)
+  )
+}
+
+function hasAnyExplicitMesAnio(descripcion) {
+  const txt = String(descripcion || '').toLowerCase()
+  if (!txt) return false
+  const nombres = MESES.slice(1).map((n) => n.toLowerCase())
+  if (nombres.some((n) => new RegExp(`\\b${n}\\s+20\\d{2}\\b`).test(txt))) return true
+  return /\b(0?[1-9]|1[0-2])\/20\d{2}\b|\b20\d{2}-(0?[1-9]|1[0-2])\b/.test(txt)
+}
+
+function buildBalanceMensualPorRubro({
+  mesesRango,
+  fechaLimiteFin,
+  periodosMensuales = [],
+  pagosServicios = [],
+  cobrosExternos = [],
+  egresos = [],
+  pagosGuardia = [],
+}) {
+  const dentroDelCorte = (fechaStr) => {
+    if (!fechaLimiteFin || !fechaStr) return true
+    const f = parseFecha(fechaStr)
+    return !f || f <= fechaLimiteFin
+  }
+
+  // Agrupar cobros pagados por periodo al que pertenecen (no por fecha calendario de caja)
+  const ingresosPorPeriodo = new Map()
+  const ensureIng = (mes, anio) => {
+    const key = `${anio}-${String(mes).padStart(2, '0')}`
+    if (!ingresosPorPeriodo.has(key)) {
+      ingresosPorPeriodo.set(key, {
+        luzCobrado: 0,
+        aguaSocios: 0,
+        aguaExternos: 0,
+        guardiaSocios: 0,
+        guardiaExternos: 0,
+        multasCobrado: 0,
+      })
+    }
+    return ingresosPorPeriodo.get(key)
+  }
+
+  ;(pagosServicios || [])
+    .filter((p) => p.estado === 'activo' && dentroDelCorte(p.fecha_pago))
+    .forEach((p) => {
+      const pm = p.cobros_servicios?.periodos_mensuales
+      if (!pm?.mes || !pm?.anio) return
+      const bucket = ensureIng(pm.mes, pm.anio)
+      const d = extraerDesglosePagoServicio(p)
+      bucket.guardiaSocios += d.guardia
+      bucket.aguaSocios += d.agua
+      bucket.luzCobrado += d.luz
+      bucket.multasCobrado += d.multa
+    })
+
+  ;(cobrosExternos || [])
+    .filter((c) => !c.anulado && dentroDelCorte(c.fecha_pago))
+    .forEach((c) => {
+      if (!c.mes || !c.anio) return
+      const bucket = ensureIng(c.mes, c.anio)
+      const d = extraerDesgloseCobroExterno(c)
+      bucket.guardiaExternos += d.guardia
+      bucket.aguaExternos += d.agua
+    })
+
+  const egresosServiciosActivos = (egresos || []).filter(
+    (e) => e.estado === 'activo' && e.caja === 'servicios' && dentroDelCorte(e.fecha)
+  )
+  const egresosById = new Map(egresosServiciosActivos.map((e) => [e.id, e]))
+  const claimedEgresoIds = new Set()
+
+  // Pre-reclamar egresos vinculados por periodo (incluso fuera del rango visible) para evitar doble conteo en Otros
+  ;(periodosMensuales || []).forEach((pm) => {
+    if (pm.egreso_luz_id && egresosById.has(pm.egreso_luz_id)) claimedEgresoIds.add(pm.egreso_luz_id)
+    if (pm.egreso_agua_id && egresosById.has(pm.egreso_agua_id)) claimedEgresoIds.add(pm.egreso_agua_id)
+  })
+  ;(pagosGuardia || [])
+    .filter((pg) => !pg.anulado && pg.egreso_id && egresosById.has(pg.egreso_id))
+    .forEach((pg) => claimedEgresoIds.add(pg.egreso_id))
+
+  const matchesEgresoPeriodo = (e, mes, anio) => {
+    if (matchesPeriodoDescripcion(e.descripcion, mes, anio)) return true
+    if (hasAnyExplicitMesAnio(e.descripcion)) return false
+    const f = parseFecha(e.fecha)
+    return Boolean(f && f.getFullYear() === anio && f.getMonth() + 1 === mes)
+  }
+
+  return mesesRango.map((mInfo) => {
+    const { mes, anio, key, label, shortLabel } = mInfo
+    const ing = ingresosPorPeriodo.get(key) || {
+      luzCobrado: 0,
+      aguaSocios: 0,
+      aguaExternos: 0,
+      guardiaSocios: 0,
+      guardiaExternos: 0,
+      multasCobrado: 0,
+    }
+    const pm =
+      (periodosMensuales || []).find((p) => Number(p.mes) === mes && Number(p.anio) === anio) ||
+      null
+
+    // 1. LUZ
+    const luzCobrado = round2(ing.luzCobrado)
+    let luzPagado = 0
+    let luzEstado = 'Pendiente de pago'
+
+    if (pm?.egreso_luz_id && egresosById.has(pm.egreso_luz_id)) {
+      const egLuz = egresosById.get(pm.egreso_luz_id)
+      luzPagado = round2(parseFloat(egLuz.monto) || 0)
+      claimedEgresoIds.add(egLuz.id)
+      luzEstado = 'Pagada'
+    } else {
+      const egLuzMatches = egresosServiciosActivos.filter(
+        (e) => isLuzFacturaCategoria(e.categoria) && matchesEgresoPeriodo(e, mes, anio)
+      )
+      if (egLuzMatches.length > 0) {
+        luzPagado = round2(
+          egLuzMatches.reduce((s, e) => {
+            claimedEgresoIds.add(e.id)
+            return s + (parseFloat(e.monto) || 0)
+          }, 0)
+        )
+        luzEstado = 'Pagada'
+      } else if (
+        pm?.estado_pago_factura === 'pagada' &&
+        dentroDelCorte(pm.fecha_pago_factura) &&
+        (parseFloat(pm.factura_luz_bs) || 0) > 0
+      ) {
+        luzPagado = round2(parseFloat(pm.factura_luz_bs) || 0)
+        luzEstado = 'Pagada'
+      }
+    }
+    const luzSaldo = round2(luzCobrado - luzPagado)
+
+    // 2. AGUA
+    const aguaSocios = round2(ing.aguaSocios)
+    const aguaExternos = round2(ing.aguaExternos)
+    const aguaCobrado = round2(aguaSocios + aguaExternos)
+    let aguaPagado = 0
+    let aguaEstado = 'Pendiente de pago'
+
+    if (pm?.egreso_agua_id && egresosById.has(pm.egreso_agua_id)) {
+      const egAgua = egresosById.get(pm.egreso_agua_id)
+      aguaPagado = round2(parseFloat(egAgua.monto) || 0)
+      claimedEgresoIds.add(egAgua.id)
+      aguaEstado = 'Pagada'
+    } else {
+      const egAguaMatches = egresosServiciosActivos.filter(
+        (e) => isAguaFacturaCategoria(e.categoria) && matchesEgresoPeriodo(e, mes, anio)
+      )
+      if (egAguaMatches.length > 0) {
+        aguaPagado = round2(
+          egAguaMatches.reduce((s, e) => {
+            claimedEgresoIds.add(e.id)
+            return s + (parseFloat(e.monto) || 0)
+          }, 0)
+        )
+        aguaEstado = 'Pagada'
+      } else if (
+        pm?.estado_pago_agua === 'pagada' &&
+        dentroDelCorte(pm.fecha_pago_agua) &&
+        (parseFloat(pm.factura_agua_bs) || 0) > 0
+      ) {
+        aguaPagado = round2(parseFloat(pm.factura_agua_bs) || 0)
+        aguaEstado = 'Pagada'
+      }
+    }
+    const aguaSaldo = round2(aguaCobrado - aguaPagado)
+
+    // 3. GUARDIA
+    const guardiaSocios = round2(ing.guardiaSocios)
+    const guardiaExternos = round2(ing.guardiaExternos)
+    const guardiaCobrado = round2(guardiaSocios + guardiaExternos)
+
+    const pagosGuardiaMes = (pagosGuardia || []).filter(
+      (pg) =>
+        !pg.anulado &&
+        Number(pg.mes) === mes &&
+        Number(pg.anio) === anio &&
+        dentroDelCorte(pg.fecha_pago)
+    )
+    let guardiaPagado = round2(
+      pagosGuardiaMes.reduce((s, pg) => {
+        if (pg.egreso_id) claimedEgresoIds.add(pg.egreso_id)
+        return s + (parseFloat(pg.monto) || 0)
+      }, 0)
+    )
+
+    const egGuardiaExtra = egresosServiciosActivos.filter(
+      (e) =>
+        !claimedEgresoIds.has(e.id) &&
+        isGuardiaCategoria(e.categoria) &&
+        matchesEgresoPeriodo(e, mes, anio)
+    )
+    if (egGuardiaExtra.length > 0) {
+      guardiaPagado = round2(
+        guardiaPagado +
+          egGuardiaExtra.reduce((s, e) => {
+            claimedEgresoIds.add(e.id)
+            return s + (parseFloat(e.monto) || 0)
+          }, 0)
+      )
+    }
+    const guardiaSaldo = round2(guardiaCobrado - guardiaPagado)
+
+    // 4. OTROS OPERATIVOS (Multas cobradas del periodo vs egresos operativos Caja Servicios del mes)
+    const otrosCobrado = round2(ing.multasCobrado)
+    const otrosPagado = round2(
+      egresosServiciosActivos
+        .filter((e) => {
+          if (claimedEgresoIds.has(e.id)) return false
+          if (
+            isLuzFacturaCategoria(e.categoria) ||
+            isAguaFacturaCategoria(e.categoria) ||
+            isGuardiaCategoria(e.categoria)
+          ) {
+            return false
+          }
+          const f = parseFecha(e.fecha)
+          return Boolean(f && f.getFullYear() === anio && f.getMonth() + 1 === mes)
+        })
+        .reduce((s, e) => s + (parseFloat(e.monto) || 0), 0)
+    )
+    const otrosSaldo = round2(otrosCobrado - otrosPagado)
+
+    const totalCobrado = round2(luzCobrado + aguaCobrado + guardiaCobrado + otrosCobrado)
+    const totalPagado = round2(luzPagado + aguaPagado + guardiaPagado + otrosPagado)
+    const sobranteNeto = round2(totalCobrado - totalPagado)
+
+    return {
+      key,
+      mes,
+      anio,
+      label,
+      shortLabel,
+      luz: {
+        cobrado: luzCobrado,
+        pagado: luzPagado,
+        saldo: luzSaldo,
+        estado: luzEstado,
+        pendiente: luzEstado !== 'Pagada',
+      },
+      agua: {
+        cobrado: aguaCobrado,
+        cobradoSocios: aguaSocios,
+        cobradoExternos: aguaExternos,
+        pagado: aguaPagado,
+        saldo: aguaSaldo,
+        estado: aguaEstado,
+        pendiente: aguaEstado !== 'Pagada',
+      },
+      guardia: {
+        cobrado: guardiaCobrado,
+        cobradoSocios: guardiaSocios,
+        cobradoExternos: guardiaExternos,
+        pagado: guardiaPagado,
+        saldo: guardiaSaldo,
+      },
+      otros: {
+        cobrado: otrosCobrado,
+        pagado: otrosPagado,
+        saldo: otrosSaldo,
+      },
+      totalCobrado,
+      totalPagado,
+      sobranteNeto,
+    }
+  })
+}
+
 function buildMesesRango(mesInicio, anioInicio, mesFin, anioFin) {
   const result = []
   let y = parseInt(anioInicio, 10)
@@ -654,6 +991,8 @@ export function calcularConsolidadoRendicion({
   cobrosExtrasCuotas = [],
   pagosCobrosExtras = [],
   egresosCobrosExtras = [],
+  periodosMensuales = [],
+  pagosGuardia = [],
 }) {
   // 1. Fechas límite del rango de periodos y de corte de caja para Asamblea
   const fechaInicioPeriodo = new Date(anioInicio, mesInicio - 1, 1, 0, 0, 0, 0)
@@ -836,34 +1175,11 @@ export function calcularConsolidadoRendicion({
     if (p.metodo_pago === 'efectivo') ingServiciosRegularesEf += m
     if (p.metodo_pago === 'qr') ingServiciosRegularesQr += m
 
-    if (m <= 0) return
-    const c = p.cobros_servicios || {}
-    let g = parseFloat(c.monto_guardia)
-    let a = parseFloat(c.monto_agua)
-    let l = parseFloat(c.monto_luz_grupo)
-
-    if (!Number.isFinite(g) || !Number.isFinite(a) || !Number.isFinite(l)) {
-      const baseCalc = calcularDesgloseRubrosBase({
-        cantidadPuestos: c.cantidad_puestos_aplicada || 1,
-        montoBase: parseFloat(c.monto_base) || 0,
-        montoLuzRedondeado: parseFloat(c.monto_luz_redondeado) || 0,
-      })
-      if (!Number.isFinite(g)) g = baseCalc.montoGuardia
-      if (!Number.isFinite(a)) a = baseCalc.montoAgua
-      if (!Number.isFinite(l)) l = baseCalc.montoLuzGrupo
-    }
-
-    const sumRubros = Math.max(0, g + a + l)
-    const totalCobro = Math.max(parseFloat(c.total_a_pagar) || 0, sumRubros)
-    if (totalCobro > 0) {
-      const ratio = m / totalCobro
-      guardiaSocios += g * ratio
-      aguaSocios += a * ratio
-      luzSocios += l * ratio
-      multasSocios += Math.max(0, totalCobro - sumRubros) * ratio
-    } else {
-      guardiaSocios += m
-    }
+    const d = extraerDesglosePagoServicio(p)
+    guardiaSocios += d.guardia
+    aguaSocios += d.agua
+    luzSocios += d.luz
+    multasSocios += d.multa
   })
 
   // Aportantes Externos (Guardia y Agua) dentro del rango
@@ -881,24 +1197,9 @@ export function calcularConsolidadoRendicion({
     if (c.metodo_pago === 'efectivo') ingExternosEf += m
     if (c.metodo_pago === 'qr') ingExternosQr += m
 
-    if (m <= 0) return
-    const g = parseFloat(c.monto_guardia)
-    const a = parseFloat(c.monto_agua)
-    if (Number.isFinite(g) || Number.isFinite(a)) {
-      const gg = Number.isFinite(g) ? g : 0
-      const aa = Number.isFinite(a) ? a : 0
-      const s = gg + aa
-      if (s > 0 && Math.abs(s - m) > 0.01) {
-        guardiaExternos += (gg / s) * m
-        aguaExternos += (aa / s) * m
-      } else {
-        guardiaExternos += gg
-        aguaExternos += aa
-      }
-    } else {
-      guardiaExternos += m * 0.8
-      aguaExternos += m * 0.2
-    }
+    const d = extraerDesgloseCobroExterno(c)
+    guardiaExternos += d.guardia
+    aguaExternos += d.agua
   })
 
   // Pagos de Deudores de Ciclos Anteriores dentro del rango
@@ -1228,6 +1529,16 @@ export function calcularConsolidadoRendicion({
     fechaFinPeriodo,
   })
 
+  const balanceMensualPorRubro = buildBalanceMensualPorRubro({
+    mesesRango,
+    fechaLimiteFin,
+    periodosMensuales,
+    pagosServicios,
+    cobrosExternos,
+    egresos,
+    pagosGuardia,
+  })
+
   const resumenCobrosExtras = (cobrosExtrasCampanas || [])
     .filter((camp) => {
       if (camp.estado === 'anulada') return false
@@ -1376,6 +1687,7 @@ export function calcularConsolidadoRendicion({
     },
     matrizPeriodo,
     matrizDeudores,
+    balanceMensualPorRubro,
     resumenCobrosExtras,
   }
 }

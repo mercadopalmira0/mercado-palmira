@@ -8,6 +8,7 @@ import { MESES, getLocalDateStr, formatFechaDMY } from '../../lib/formatters'
 import InformeConsolidadoTab from './rendicion/InformeConsolidadoTab'
 import MatrizPeriodoTab from './rendicion/MatrizPeriodoTab'
 import MatrizDeudoresTab from './rendicion/MatrizDeudoresTab'
+import BalanceMensualTab from './rendicion/BalanceMensualTab'
 import {
   Printer,
   Download,
@@ -17,7 +18,8 @@ import {
   Wallet,
   CheckCircle2,
   Table2,
-  AlertCircle
+  AlertCircle,
+  BarChart3,
 } from 'lucide-react'
 
 function getDefaultFechaCorte(mesFin, anioFin) {
@@ -85,6 +87,7 @@ export default function RendicionView() {
         { data: extrasCuotasData },
         { data: extrasPagosData },
         { data: extrasEgresosData },
+        { data: pagosGuardiaData },
       ] = await Promise.all([
         supabase.from('periodos_mensuales').select('*'),
         supabase.from('ciclos_hacienda').select('*').order('created_at', { ascending: false }),
@@ -156,6 +159,7 @@ export default function RendicionView() {
           .in('estado', ['pendiente', 'parcial']),
         supabase.from('pagos_cobros_extras').select('*').eq('anulado', false),
         supabase.from('egresos_cobros_extras').select('*').eq('anulado', false),
+        supabase.from('pagos_guardia').select('*'),
       ])
 
       const periodosEnRango = (periodosData || []).filter((p) => {
@@ -192,6 +196,8 @@ export default function RendicionView() {
         cobrosExtrasCuotas: extrasCuotasData || [],
         pagosCobrosExtras: extrasPagosData || [],
         egresosCobrosExtras: extrasEgresosData || [],
+        periodosMensuales: periodosData || [],
+        pagosGuardia: pagosGuardiaData || [],
       })
 
       setConsolidado(resultado)
@@ -673,6 +679,19 @@ export default function RendicionView() {
             Deudores ({consolidado?.matrizDeudores?.resumenPorDeudor?.length || 0})
           </span>
         </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveTab('balance_mensual')}
+          className={`px-4 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 border ${
+            activeTab === 'balance_mensual'
+              ? 'bg-indigo-700 text-white border-indigo-700 shadow-sm'
+              : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+          }`}
+        >
+          <BarChart3 className="w-4 h-4" />
+          <span>Balance Mes a Mes</span>
+        </button>
       </div>
 
       {/* REPORTE OFICIAL IMPRIMIBLE */}
@@ -707,7 +726,7 @@ export default function RendicionView() {
           matrizFilter={matrizFilter}
           setMatrizFilter={setMatrizFilter}
         />
-      ) : (
+      ) : activeTab === 'matriz_deudores' ? (
         <MatrizDeudoresTab
           consolidado={consolidado}
           deudorSearch={deudorSearch}
@@ -717,6 +736,8 @@ export default function RendicionView() {
           expandedDeudores={expandedDeudores}
           toggleExpandDeudor={toggleExpandDeudor}
         />
+      ) : (
+        <BalanceMensualTab consolidado={consolidado} />
       )}
 
       {/* Modal Confirmación Cierre de Periodo y Arrastre de Ciclo */}
