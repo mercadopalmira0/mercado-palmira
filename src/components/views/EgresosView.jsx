@@ -21,6 +21,9 @@ import {
   Shield,
   Edit2,
   Trash2,
+  Calendar,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react'
 
 const SUGERENCIAS_SERVICIOS = [
@@ -31,7 +34,9 @@ const SUGERENCIAS_SERVICIOS = [
   'Alumbrado / Pasillos',
   'Papelería / Talonarios',
   'Viáticos / Pasajes',
+  'Cuota Reunión (Terceros)',
   'Imprevistos',
+  'Otros',
 ]
 
 const SUGERENCIAS_AFILIACIONES = [
@@ -43,6 +48,7 @@ const SUGERENCIAS_AFILIACIONES = [
   'Compra Insumos / Veneno',
   'Apoyo Reunión Directiva',
   'Mejoras de Infraestructura',
+  'Otros',
 ]
 
 const TIPOS_GUARDIA = [
@@ -61,6 +67,9 @@ export default function EgresosView() {
   const [filterCaja, setFilterCaja] = useState('todos')
   const [filterMetodo, setFilterMetodo] = useState('todos')
   const [searchTerm, setSearchTerm] = useState('')
+  const [filtrarMesHistorial, setFiltrarMesHistorial] = useState(false)
+  const [histMes, setHistMes] = useState(today.getMonth() + 1)
+  const [histAnio, setHistAnio] = useState(today.getFullYear())
   const [statusMessage, setStatusMessage] = useState(null)
 
   // Modal Egreso General (Crear / Editar)
@@ -717,7 +726,31 @@ export default function EgresosView() {
     }
   }
 
+  const stepHistMonth = (delta) => {
+    let nextM = histMes + delta
+    let nextY = histAnio
+    if (nextM < 1) {
+      nextM = 12
+      nextY -= 1
+    } else if (nextM > 12) {
+      nextM = 1
+      nextY += 1
+    }
+    setHistMes(nextM)
+    setHistAnio(nextY)
+  }
+
+  const getFechaYearMonth = (fechaStr) => {
+    const match = String(fechaStr || '').match(/^(\d{4})-(\d{2})/)
+    if (!match) return null
+    return { anio: parseInt(match[1], 10), mes: parseInt(match[2], 10) }
+  }
+
   const filteredEgresos = egresos.filter((eg) => {
+    if (filtrarMesHistorial) {
+      const ym = getFechaYearMonth(eg.fecha)
+      if (!ym || ym.mes !== histMes || ym.anio !== histAnio) return false
+    }
     const term = searchTerm.toLowerCase()
     const matchesSearch = !term || eg.descripcion?.toLowerCase().includes(term) || eg.categoria?.toLowerCase().includes(term)
     if (!matchesSearch) return false
@@ -726,15 +759,44 @@ export default function EgresosView() {
     return true
   })
 
-  const totalServicios = egresos
-    .filter((e) => e.caja === 'servicios' && e.estado === 'activo')
-    .reduce((s, e) => s + (parseFloat(e.monto) || 0), 0)
+  const totalServicios = round2(
+    filteredEgresos
+      .filter((e) => e.caja === 'servicios' && e.estado === 'activo')
+      .reduce((s, e) => s + (parseFloat(e.monto) || 0), 0)
+  )
 
-  const totalAfiliaciones = egresos
-    .filter((e) => e.caja === 'afiliaciones' && e.estado === 'activo')
-    .reduce((s, e) => s + (parseFloat(e.monto) || 0), 0)
+  const totalAfiliaciones = round2(
+    filteredEgresos
+      .filter((e) => e.caja === 'afiliaciones' && e.estado === 'activo')
+      .reduce((s, e) => s + (parseFloat(e.monto) || 0), 0)
+  )
 
-  const totalGeneralEgresos = totalServicios + totalAfiliaciones
+  const totalGeneralEgresos = round2(totalServicios + totalAfiliaciones)
+  const kpiPeriodoLabel = filtrarMesHistorial ? `${MESES[histMes]} ${histAnio}` : 'Total general'
+
+  const egresosAgrupados = (() => {
+    const gruposMap = new Map()
+    filteredEgresos.forEach((eg) => {
+      const ym = getFechaYearMonth(eg.fecha)
+      const key = ym ? `${ym.anio}-${String(ym.mes).padStart(2, '0')}` : 'sin-fecha'
+      if (!gruposMap.has(key)) {
+        gruposMap.set(key, {
+          key,
+          anio: ym?.anio || 0,
+          mes: ym?.mes || 0,
+          label: ym ? `${MESES[ym.mes] || ym.mes} ${ym.anio}` : 'Sin fecha',
+          items: [],
+          totalActivo: 0,
+        })
+      }
+      const g = gruposMap.get(key)
+      g.items.push(eg)
+      if (eg.estado === 'activo') {
+        g.totalActivo = round2(g.totalActivo + (parseFloat(eg.monto) || 0))
+      }
+    })
+    return Array.from(gruposMap.values()).sort((a, b) => b.anio - a.anio || b.mes - a.mes)
+  })()
 
   const totalAdelantosGuardia = pagosGuardia
     .filter((p) => !p.anulado)
@@ -1278,15 +1340,21 @@ export default function EgresosView() {
 
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-sm">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-700 block">Egresos Caja Servicios</span>
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-700">Egresos Caja Servicios</span>
+                <span className="text-[10px] font-semibold text-slate-400">{kpiPeriodoLabel}</span>
+              </div>
               <p className="text-xl font-bold text-slate-900 mt-1">
                 {totalServicios.toFixed(2)} <span className="text-xs font-normal text-slate-500">Bs</span>
               </p>
-              <span className="text-[11px] text-slate-400">Luz, agua, guardia y basura</span>
+              <span className="text-[11px] text-slate-400">Luz, agua, guardia y operativos</span>
             </div>
 
             <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-sm">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-blue-700 block">Egresos Caja Afiliaciones</span>
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-blue-700">Egresos Caja Afiliaciones</span>
+                <span className="text-[10px] font-semibold text-slate-400">{kpiPeriodoLabel}</span>
+              </div>
               <p className="text-xl font-bold text-slate-900 mt-1">
                 {totalAfiliaciones.toFixed(2)} <span className="text-xs font-normal text-slate-500">Bs</span>
               </p>
@@ -1294,50 +1362,134 @@ export default function EgresosView() {
             </div>
 
             <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-sm">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-red-600 block">Total Egresos General</span>
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-red-600">Total Egresos</span>
+                <span className="text-[10px] font-semibold text-slate-400">{kpiPeriodoLabel}</span>
+              </div>
               <p className="text-xl font-bold text-red-600 mt-1">
                 {totalGeneralEgresos.toFixed(2)} <span className="text-xs font-normal text-slate-500">Bs</span>
               </p>
-              <span className="text-[11px] text-slate-400">Total descargado en recibos</span>
+              <span className="text-[11px] text-slate-400">Total descargado en recibos ({kpiPeriodoLabel.toLowerCase()})</span>
             </div>
           </div>
 
-          <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-sm flex flex-col sm:flex-row items-center gap-3">
-            <div className="relative flex-1 w-full">
-              <Search className="w-4 h-4 absolute left-3.5 top-3 text-slate-400" />
-              <input
-                type="text"
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                placeholder="Buscar por descripción o categoría..."
-                className="w-full pl-10 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-amber-500 focus:outline-none"
-              />
+          <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-sm space-y-3">
+            <div className="flex flex-col sm:flex-row items-center gap-3">
+              <div className="relative flex-1 w-full">
+                <Search className="w-4 h-4 absolute left-3.5 top-3 text-slate-400" />
+                <input
+                  type="text"
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  placeholder="Buscar por descripción o categoría..."
+                  className="w-full pl-10 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-amber-500 focus:outline-none"
+                />
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2 text-xs font-medium w-full sm:w-auto">
+                <div className="flex items-center space-x-1 bg-slate-100 p-1 rounded-xl">
+                  <button type="button" onClick={() => setFilterCaja('todos')} className={`px-2.5 py-1 rounded-lg ${filterCaja === 'todos' ? 'bg-white font-bold shadow-sm' : 'text-slate-600'}`}>
+                    Todas
+                  </button>
+                  <button type="button" onClick={() => setFilterCaja('servicios')} className={`px-2.5 py-1 rounded-lg ${filterCaja === 'servicios' ? 'bg-emerald-600 text-white font-bold' : 'text-slate-600'}`}>
+                    Servicios
+                  </button>
+                  <button type="button" onClick={() => setFilterCaja('afiliaciones')} className={`px-2.5 py-1 rounded-lg ${filterCaja === 'afiliaciones' ? 'bg-blue-600 text-white font-bold' : 'text-slate-600'}`}>
+                    Afiliaciones
+                  </button>
+                </div>
+
+                <div className="flex items-center space-x-1 bg-slate-100 p-1 rounded-xl">
+                  <button type="button" onClick={() => setFilterMetodo('todos')} className={`px-2 py-1 rounded-lg ${filterMetodo === 'todos' ? 'bg-white font-bold shadow-sm' : 'text-slate-600'}`}>
+                    Todos
+                  </button>
+                  <button type="button" onClick={() => setFilterMetodo('efectivo')} className={`px-2 py-1 rounded-lg ${filterMetodo === 'efectivo' ? 'bg-slate-900 text-white font-bold' : 'text-slate-600'}`}>
+                    Efectivo
+                  </button>
+                  <button type="button" onClick={() => setFilterMetodo('qr')} className={`px-2 py-1 rounded-lg ${filterMetodo === 'qr' ? 'bg-slate-900 text-white font-bold' : 'text-slate-600'}`}>
+                    QR
+                  </button>
+                </div>
+              </div>
             </div>
 
-            <div className="flex flex-wrap items-center gap-2 text-xs font-medium">
-              <div className="flex items-center space-x-1 bg-slate-100 p-1 rounded-xl">
-                <button onClick={() => setFilterCaja('todos')} className={`px-2.5 py-1 rounded-lg ${filterCaja === 'todos' ? 'bg-white font-bold shadow-sm' : 'text-slate-600'}`}>
-                  Todas
-                </button>
-                <button onClick={() => setFilterCaja('servicios')} className={`px-2.5 py-1 rounded-lg ${filterCaja === 'servicios' ? 'bg-emerald-600 text-white font-bold' : 'text-slate-600'}`}>
-                  Servicios
-                </button>
-                <button onClick={() => setFilterCaja('afiliaciones')} className={`px-2.5 py-1 rounded-lg ${filterCaja === 'afiliaciones' ? 'bg-blue-600 text-white font-bold' : 'text-slate-600'}`}>
-                  Afiliaciones
-                </button>
+            {/* Filtro de Periodo: General (agrupado por mes) vs Un solo mes */}
+            <div className="pt-3 border-t border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 text-xs">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="font-semibold text-slate-600 flex items-center gap-1.5">
+                  <Calendar className="w-3.5 h-3.5 text-amber-600" />
+                  <span>Periodo:</span>
+                </span>
+                <div className="flex items-center space-x-1 bg-slate-100 p-1 rounded-xl font-medium">
+                  <button
+                    type="button"
+                    onClick={() => setFiltrarMesHistorial(false)}
+                    className={`px-2.5 py-1 rounded-lg transition-all ${
+                      !filtrarMesHistorial ? 'bg-white font-bold text-slate-900 shadow-sm' : 'text-slate-600'
+                    }`}
+                  >
+                    Todos los meses
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setFiltrarMesHistorial(true)}
+                    className={`px-2.5 py-1 rounded-lg transition-all ${
+                      filtrarMesHistorial ? 'bg-amber-600 text-white font-bold shadow-sm' : 'text-slate-600'
+                    }`}
+                  >
+                    Filtrar un solo mes
+                  </button>
+                </div>
               </div>
 
-              <div className="flex items-center space-x-1 bg-slate-100 p-1 rounded-xl">
-                <button onClick={() => setFilterMetodo('todos')} className={`px-2 py-1 rounded-lg ${filterMetodo === 'todos' ? 'bg-white font-bold shadow-sm' : 'text-slate-600'}`}>
-                  Todos
-                </button>
-                <button onClick={() => setFilterMetodo('efectivo')} className={`px-2 py-1 rounded-lg ${filterMetodo === 'efectivo' ? 'bg-slate-900 text-white font-bold' : 'text-slate-600'}`}>
-                  Efectivo
-                </button>
-                <button onClick={() => setFilterMetodo('qr')} className={`px-2 py-1 rounded-lg ${filterMetodo === 'qr' ? 'bg-slate-900 text-white font-bold' : 'text-slate-600'}`}>
-                  QR
-                </button>
-              </div>
+              {filtrarMesHistorial ? (
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => stepHistMonth(-1)}
+                    title="Mes anterior"
+                    className="p-1.5 rounded-lg border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-700"
+                  >
+                    <ChevronLeft className="w-4 h-4" />
+                  </button>
+                  <div className="flex items-center bg-slate-50 border border-slate-200 rounded-xl px-2 py-1">
+                    <select
+                      value={histMes}
+                      onChange={(e) => setHistMes(parseInt(e.target.value, 10))}
+                      className="bg-transparent font-bold text-slate-800 pr-1 focus:outline-none"
+                    >
+                      {MESES.slice(1).map((m, i) => (
+                        <option key={i + 1} value={i + 1}>
+                          {m}
+                        </option>
+                      ))}
+                    </select>
+                    <select
+                      value={histAnio}
+                      onChange={(e) => setHistAnio(parseInt(e.target.value, 10))}
+                      className="bg-transparent font-bold text-slate-800 pl-1 border-l border-slate-200 focus:outline-none"
+                    >
+                      {[2024, 2025, 2026, 2027, 2028].map((y) => (
+                        <option key={y} value={y}>
+                          {y}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => stepHistMonth(1)}
+                    title="Mes siguiente"
+                    className="p-1.5 rounded-lg border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-700"
+                  >
+                    <ChevronRight className="w-4 h-4" />
+                  </button>
+                </div>
+              ) : (
+                <span className="text-[11px] text-slate-400 italic">
+                  Agrupados cronológicamente por mes (más reciente primero)
+                </span>
+              )}
             </div>
           </div>
 
@@ -1352,122 +1504,141 @@ export default function EgresosView() {
               <p>No se encontraron egresos con los filtros seleccionados.</p>
             </div>
           ) : (
-            <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm divide-y divide-slate-100">
-              {filteredEgresos.map((egreso) => {
-                const isAnulado = egreso.estado === 'anulado'
-                const isAnulando = anulandoEgresoId === egreso.id
-                const isServicios = egreso.caja === 'servicios'
-
-                return (
-                  <div key={egreso.id} className="p-4 hover:bg-slate-50 transition-colors space-y-2">
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
-                      <div className="flex items-start space-x-3">
-                        <span className={`p-2 rounded-xl mt-0.5 ${isServicios ? 'bg-emerald-50 text-emerald-600' : 'bg-blue-50 text-blue-600'}`}>
-                          <ArrowDownCircle className="w-4 h-4" />
-                        </span>
-                        <div>
-                          <div className="flex items-center space-x-2">
-                            <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${isServicios ? 'bg-emerald-100 text-emerald-800' : 'bg-blue-100 text-blue-800'}`}>
-                              Caja {isServicios ? 'Servicios' : 'Afiliaciones'}
-                            </span>
-                            <span className="font-semibold text-slate-800">{egreso.categoria}</span>
-                            <span className="text-slate-400 text-[11px]">• {egreso.fecha}</span>
-                          </div>
-                          <p className={`text-slate-600 mt-1 ${isAnulado ? 'line-through text-slate-400' : ''}`}>
-                            {egreso.descripcion}
-                          </p>
-                        </div>
-                      </div>
-
-                      <div className="flex items-center space-x-2 self-end sm:self-center">
-                        <div className="text-right mr-1">
-                          <span className={`text-sm font-bold block ${isAnulado ? 'line-through text-slate-400' : 'text-red-600'}`}>
-                            -{parseFloat(egreso.monto).toFixed(2)} Bs
-                          </span>
-                          <span className="text-[10px] text-slate-400 uppercase font-medium">
-                            {egreso.metodo_pago === 'qr' ? 'QR / Banco' : 'Efectivo'}
-                          </span>
-                        </div>
-
-                        {egreso.recibo_drive_url && (
-                          <a href={egreso.recibo_drive_url} target="_blank" rel="noreferrer" className="p-1.5 text-blue-600 bg-blue-50 rounded-lg" title="Ver foto del recibo">
-                            <ExternalLink className="w-3.5 h-3.5" />
-                          </a>
-                        )}
-
-                        {isAnulado ? (
-                          <span className="text-[10px] font-bold text-red-600 bg-red-50 px-2 py-0.5 rounded">Anulado</span>
-                        ) : (
-                          isAdmin && (
-                            <>
-                              <button type="button" onClick={() => openEditEgresoModal(egreso)} title="Editar egreso" className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg">
-                                <Edit2 className="w-3.5 h-3.5" />
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setAnulandoEgresoId(egreso.id)
-                                  setMotivoAnulacion('')
-                                }}
-                                className="text-[11px] font-semibold text-orange-600 hover:bg-orange-50 px-2 py-1 rounded-lg"
-                              >
-                                Anular
-                              </button>
-                            </>
-                          )
-                        )}
-
-                        {isAdmin && (
-                          <button
-                            type="button"
-                            onClick={() =>
-                              setConfirmState({
-                                open: true,
-                                tipo: 'eliminacion',
-                                entity: 'egreso',
-                                target: egreso,
-                                advertencia: '',
-                              })
-                            }
-                            title="Eliminar egreso cargado por error"
-                            className="p-1.5 text-red-600 hover:bg-red-50 rounded-lg"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        )}
-                      </div>
+            <div className="space-y-4">
+              {egresosAgrupados.map((grupo) => (
+                <div key={grupo.key} className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm">
+                  <div className="px-4 py-3 bg-slate-50 border-b border-slate-200 flex flex-wrap items-center justify-between gap-2 text-xs">
+                    <div className="flex items-center gap-2">
+                      <Calendar className="w-4 h-4 text-amber-600 shrink-0" />
+                      <span className="font-extrabold text-slate-900">{grupo.label}</span>
+                      <span className="text-slate-500 font-medium">
+                        — {grupo.items.length} {grupo.items.length === 1 ? 'egreso' : 'egresos'}
+                      </span>
                     </div>
-
-                    {isAnulado && egreso.motivo_anulacion && (
-                      <p className="text-[11px] text-red-700 bg-red-50 p-2 rounded-lg">
-                        <strong>Motivo de anulación:</strong> {egreso.motivo_anulacion}
-                      </p>
-                    )}
-
-                    {isAnulando && (
-                      <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl space-y-2 text-xs">
-                        <span className="font-bold text-amber-900 block">Motivo de Anulación Obligatorio</span>
-                        <input
-                          type="text"
-                          required
-                          value={motivoAnulacion}
-                          onChange={(e) => setMotivoAnulacion(e.target.value)}
-                          placeholder="Escribe el motivo de anulación del gasto..."
-                          className="w-full px-2.5 py-1 text-xs bg-white border border-slate-300 rounded-lg"
-                        />
-                        <div className="flex justify-end gap-2">
-                          <button type="button" onClick={() => setAnulandoEgresoId(null)} className="text-[11px] text-slate-600">
-                            Cancelar
-                          </button>
-                          <button type="button" onClick={() => handleAnularEgreso(egreso.id)} className="px-3 py-1 bg-red-600 text-white rounded-lg text-[11px] font-bold">
-                            Confirmar Anulación
-                          </button>
-                        </div>
-                      </div>
-                    )}
+                    <span className="font-mono font-extrabold text-red-600">
+                      Total: {grupo.totalActivo.toFixed(2)} Bs
+                    </span>
                   </div>
-                )
-              })}
+
+                  <div className="divide-y divide-slate-100">
+                    {grupo.items.map((egreso) => {
+                      const isAnulado = egreso.estado === 'anulado'
+                      const isAnulando = anulandoEgresoId === egreso.id
+                      const isServicios = egreso.caja === 'servicios'
+
+                      return (
+                        <div key={egreso.id} className="p-4 hover:bg-slate-50 transition-colors space-y-2">
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
+                            <div className="flex items-start space-x-3">
+                              <span className={`p-2 rounded-xl mt-0.5 ${isServicios ? 'bg-emerald-50 text-emerald-600' : 'bg-blue-50 text-blue-600'}`}>
+                                <ArrowDownCircle className="w-4 h-4" />
+                              </span>
+                              <div>
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${isServicios ? 'bg-emerald-100 text-emerald-800' : 'bg-blue-100 text-blue-800'}`}>
+                                    Caja {isServicios ? 'Servicios' : 'Afiliaciones'}
+                                  </span>
+                                  <span className="font-semibold text-slate-800">{egreso.categoria}</span>
+                                  <span className="text-slate-400 text-[11px]">• {egreso.fecha}</span>
+                                </div>
+                                <p className={`text-slate-600 mt-1 ${isAnulado ? 'line-through text-slate-400' : ''}`}>
+                                  {egreso.descripcion}
+                                </p>
+                              </div>
+                            </div>
+
+                            <div className="flex items-center space-x-2 self-end sm:self-center">
+                              <div className="text-right mr-1">
+                                <span className={`text-sm font-bold block ${isAnulado ? 'line-through text-slate-400' : 'text-red-600'}`}>
+                                  -{parseFloat(egreso.monto).toFixed(2)} Bs
+                                </span>
+                                <span className="text-[10px] text-slate-400 uppercase font-medium">
+                                  {egreso.metodo_pago === 'qr' ? 'QR / Banco' : 'Efectivo'}
+                                </span>
+                              </div>
+
+                              {egreso.recibo_drive_url && (
+                                <a href={egreso.recibo_drive_url} target="_blank" rel="noreferrer" className="p-1.5 text-blue-600 bg-blue-50 rounded-lg" title="Ver foto del recibo">
+                                  <ExternalLink className="w-3.5 h-3.5" />
+                                </a>
+                              )}
+
+                              {isAnulado ? (
+                                <span className="text-[10px] font-bold text-red-600 bg-red-50 px-2 py-0.5 rounded">Anulado</span>
+                              ) : (
+                                isAdmin && (
+                                  <>
+                                    <button type="button" onClick={() => openEditEgresoModal(egreso)} title="Editar egreso" className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg">
+                                      <Edit2 className="w-3.5 h-3.5" />
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setAnulandoEgresoId(egreso.id)
+                                        setMotivoAnulacion('')
+                                      }}
+                                      className="text-[11px] font-semibold text-orange-600 hover:bg-orange-50 px-2 py-1 rounded-lg"
+                                    >
+                                      Anular
+                                    </button>
+                                  </>
+                                )
+                              )}
+
+                              {isAdmin && (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setConfirmState({
+                                      open: true,
+                                      tipo: 'eliminacion',
+                                      entity: 'egreso',
+                                      target: egreso,
+                                      advertencia: '',
+                                    })
+                                  }
+                                  title="Eliminar egreso cargado por error"
+                                  className="p-1.5 text-red-600 hover:bg-red-50 rounded-lg"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                            </div>
+                          </div>
+
+                          {isAnulado && egreso.motivo_anulacion && (
+                            <p className="text-[11px] text-red-700 bg-red-50 p-2 rounded-lg">
+                              <strong>Motivo de anulación:</strong> {egreso.motivo_anulacion}
+                            </p>
+                          )}
+
+                          {isAnulando && (
+                            <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl space-y-2 text-xs">
+                              <span className="font-bold text-amber-900 block">Motivo de Anulación Obligatorio</span>
+                              <input
+                                type="text"
+                                required
+                                value={motivoAnulacion}
+                                onChange={(e) => setMotivoAnulacion(e.target.value)}
+                                placeholder="Escribe el motivo de anulación del gasto..."
+                                className="w-full px-2.5 py-1 text-xs bg-white border border-slate-300 rounded-lg"
+                              />
+                              <div className="flex justify-end gap-2">
+                                <button type="button" onClick={() => setAnulandoEgresoId(null)} className="text-[11px] text-slate-600">
+                                  Cancelar
+                                </button>
+                                <button type="button" onClick={() => handleAnularEgreso(egreso.id)} className="px-3 py-1 bg-red-600 text-white rounded-lg text-[11px] font-bold">
+                                  Confirmar Anulación
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              ))}
             </div>
           )}
         </>
