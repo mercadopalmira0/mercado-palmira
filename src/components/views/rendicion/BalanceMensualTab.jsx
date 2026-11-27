@@ -91,6 +91,7 @@ export default function BalanceMensualTab({
       acc.otrosPagado = round2(acc.otrosPagado + m.otros.pagado)
       acc.otrosSaldo = round2(acc.otrosSaldo + m.otros.saldo)
 
+      acc.transicionTotal = round2(acc.transicionTotal + (m.transicion?.total || 0))
       acc.totalCobrado = round2(acc.totalCobrado + m.totalCobrado)
       acc.totalPagado = round2(acc.totalPagado + m.totalPagado)
       acc.sobranteNeto = round2(acc.sobranteNeto + m.sobranteNeto)
@@ -109,6 +110,7 @@ export default function BalanceMensualTab({
       otrosCobrado: 0,
       otrosPagado: 0,
       otrosSaldo: 0,
+      transicionTotal: 0,
       totalCobrado: 0,
       totalPagado: 0,
       sobranteNeto: 0,
@@ -295,6 +297,11 @@ export default function BalanceMensualTab({
           <span className="text-[11px] text-slate-600 block mt-0.5">
             Cobrado total: {acumulados.totalCobrado.toFixed(2)} Bs • Pagado: {acumulados.totalPagado.toFixed(2)} Bs
           </span>
+          {acumulados.transicionTotal > 0 && (
+            <span className="text-[10px] font-semibold text-emerald-700 block mt-0.5">
+              Incluye transición Jun 2026: +{acumulados.transicionTotal.toFixed(2)} Bs
+            </span>
+          )}
         </div>
       </div>
 
@@ -345,6 +352,35 @@ export default function BalanceMensualTab({
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
+                    {/* Fila especial mes de transición (Junio 2026) */}
+                    {m.transicion?.activo && (
+                      <tr className="bg-emerald-50/50 hover:bg-emerald-50/80">
+                        <td className="py-3 px-4">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <Coins className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                            <span className="font-bold text-slate-900">
+                              Cobros Junio y Deudas Anteriores (Transición)
+                            </span>
+                            <span className="px-2 py-0.5 rounded-md text-[10px] font-semibold bg-emerald-100 text-emerald-800 border border-emerald-200">
+                              Mes de transición
+                            </span>
+                          </div>
+                          <span className="block text-[11px] text-slate-600 pl-5 mt-0.5">
+                            Cobros Junio / Deudas Anteriores: {m.transicion.cobrosDeudores.toFixed(2)} Bs + Saldo anterior Luz/Agua: {m.transicion.saldoAnteriorLuzAgua.toFixed(2)} Bs
+                          </span>
+                        </td>
+                        <td className="py-3 px-4 text-right font-mono font-bold text-emerald-800">
+                          {m.transicion.total.toFixed(2)} Bs
+                        </td>
+                        <td className="py-3 px-4 text-right font-mono text-slate-500">
+                          0.00 Bs
+                        </td>
+                        <td className="py-3 px-4 text-right font-mono font-extrabold text-emerald-700">
+                          {formatSignedBs(m.transicion.total)}
+                        </td>
+                      </tr>
+                    )}
+
                     {/* 1. Luz */}
                     <tr className="hover:bg-slate-50/70">
                       <td className="py-3 px-4">
@@ -406,6 +442,11 @@ export default function BalanceMensualTab({
                         <span className="block text-[11px] text-slate-500 pl-5 mt-0.5">
                           (Socios: {m.guardia.cobradoSocios.toFixed(2)} Bs + Externos: {m.guardia.cobradoExternos.toFixed(2)} Bs)
                         </span>
+                        {m.guardia.notaInformativa && (
+                          <span className="block text-[11px] text-amber-700 italic pl-5 mt-0.5">
+                            {m.guardia.notaInformativa}
+                          </span>
+                        )}
                       </td>
                       <td className="py-3 px-4 text-right font-mono font-semibold text-slate-800">
                         {m.guardia.cobrado.toFixed(2)} Bs

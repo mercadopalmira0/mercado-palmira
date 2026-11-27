@@ -221,9 +221,13 @@ export function buildBalanceMensualPorRubro({
   mes = null,
   anio = null,
   fechaLimiteFin = null,
+  ciclosHacienda = [],
+  saldosIniciales = [],
   periodosMensuales = [],
   pagosServicios = [],
+  cobrosServicios = [],
   cobrosExternos = [],
+  pagosDeudoresCiclos = [],
   egresos = [],
   pagosGuardia = [],
 }) {
@@ -432,7 +436,55 @@ export function buildBalanceMensualPorRubro({
     )
     const otrosSaldo = round2(otrosCobrado - otrosPagado)
 
-    const totalCobrado = round2(luzCobrado + aguaCobrado + guardiaCobrado + otrosCobrado)
+    // 5. MES DE TRANSICIÓN (JUNIO 2026 sin cobros_servicios propios):
+    // Refleja cobros de junio/deudas anteriores + fondo inicial para Luz/Agua entregado por tesorero anterior
+    const tieneCobrosPropiosJunio = (cobrosServicios || []).some(
+      (c) => Number(c.periodos_mensuales?.mes) === 6 && Number(c.periodos_mensuales?.anio) === 2026
+    )
+    let transicion = null
+    let guardiaNotaInformativa = null
+
+    if (mes === 6 && anio === 2026 && !tieneCobrosPropiosJunio) {
+      const cobrosDeudoresJunio = round2(
+        (pagosDeudoresCiclos || [])
+          .filter((p) => {
+            if (p.anulado || !dentroDelCorte(p.fecha_pago)) return false
+            const cajaDeuda = p.deudores_ciclos?.caja || p.caja || 'servicios'
+            const origenDeuda = p.deudores_ciclos?.origen || 'tesorero_anterior'
+            return cajaDeuda === 'servicios' && origenDeuda === 'tesorero_anterior'
+          })
+          .reduce((s, p) => s + (parseFloat(p.monto) || 0), 0)
+      )
+
+      const cicloInicial = (ciclosHacienda || []).find((c) => c.es_inicial) || null
+      let saldoAnteriorLuzAgua = 0
+      if (cicloInicial) {
+        const sumCiclo = round2(
+          (parseFloat(cicloInicial.servicios_efectivo_inicial) || 0) +
+            (parseFloat(cicloInicial.servicios_qr_inicial) || 0)
+        )
+        saldoAnteriorLuzAgua = sumCiclo > 0 ? sumCiclo : 1550
+      } else if ((saldosIniciales || []).length > 0) {
+        saldoAnteriorLuzAgua = round2(
+          (saldosIniciales || [])
+            .filter((s) => s.caja === 'servicios')
+            .reduce((acc, s) => acc + (parseFloat(s.monto_inicial) || 0), 0)
+        )
+      }
+
+      const totalTransicion = round2(cobrosDeudoresJunio + saldoAnteriorLuzAgua)
+      transicion = {
+        activo: true,
+        cobrosDeudores: cobrosDeudoresJunio,
+        saldoAnteriorLuzAgua,
+        total: totalTransicion,
+      }
+      guardiaNotaInformativa = 'Pagado previamente por el tesorero anterior (2600.00 Bs)'
+    }
+
+    const totalCobrado = round2(
+      luzCobrado + aguaCobrado + guardiaCobrado + otrosCobrado + (transicion?.total || 0)
+    )
     const totalPagado = round2(luzPagado + aguaPagado + guardiaPagado + otrosPagado)
     const sobranteNeto = round2(totalCobrado - totalPagado)
 
@@ -442,6 +494,7 @@ export function buildBalanceMensualPorRubro({
       anio,
       label,
       shortLabel,
+      transicion,
       luz: {
         cobrado: luzCobrado,
         pagado: luzPagado,
@@ -464,6 +517,7 @@ export function buildBalanceMensualPorRubro({
         cobradoExternos: guardiaExternos,
         pagado: guardiaPagado,
         saldo: guardiaSaldo,
+        notaInformativa: guardiaNotaInformativa,
       },
       otros: {
         cobrado: otrosCobrado,
@@ -1635,9 +1689,13 @@ export function calcularConsolidadoRendicion({
   const balanceMensualPorRubro = buildBalanceMensualPorRubro({
     mesesRango,
     fechaLimiteFin,
+    ciclosHacienda,
+    saldosIniciales,
     periodosMensuales,
     pagosServicios,
+    cobrosServicios,
     cobrosExternos,
+    pagosDeudoresCiclos,
     egresos,
     pagosGuardia,
   })
